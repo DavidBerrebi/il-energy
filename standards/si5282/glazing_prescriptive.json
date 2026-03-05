@@ -1,0 +1,26 @@
+{
+  "prescriptive_path_grade_c": {
+    "with_external_shutter": {
+      "u_value_limits": [
+        {"max_area_m2": 2.5, "regular_construction": 4.2, "light_construction": 4.0},
+        {"max_area_m2": 4.8, "regular_construction": 3.8, "light_construction": 3.6},
+        {"above_area_m2": 4.8, "regular_construction": 3.4, "light_construction": 3.2}
+      ]
+    },
+    "without_external_shutter": {
+      "u_value_limits": [
+        {"max_area_m2": 2.5, "regular_construction": 4.1, "light_construction": 3.9},
+        {"max_area_m2": 4.8, "regular_construction": 3.7, "light_construction": 3.5},
+        {"above_area_m2": 4.8, "regular_construction": 3.3, "light_construction": 3.1}
+      ],
+      "shgc_by_wwr_effective": [
+        {"max_wwref": 0.12, "max_shgc": 0.80},
+        {"max_wwref": 0.30, "max_shgc": 0.65},
+        {"max_wwref": 0.50, "max_shgc": 0.40},
+        {"max_wwref": 0.65, "max_shgc": 0.30},
+        {"above_wwref": 0.65, "max_shgc": 0.22}
+      ],
+      "north_facing_shgc": "no_limit"
+    }
+  }
+}

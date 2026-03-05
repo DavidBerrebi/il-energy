@@ -1,0 +1,11 @@
+{
+  "wind_directions_deg": [0, 45, 90, 135, 180, 225, 270, 315],
+  "pressure_coefficients": [0.6, 0.3, -0.4, -0.3, -0.2, -0.3, -0.4, 0.3],
+  "effectiveness_coefficients": {
+    "windward_angle_le_30": 0.6,
+    "windward_angle_30_to_60": 0.3,
+    "windward_angle_gt_60": 0.1,
+    "leeward_multi_plane": 0.05,
+    "leeward_single_plane_or_no_openings": 0.0
+  }
+}

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "il-energy"
+version = "0.1.0"
+description = "Israeli Energy Compliance Engine for SI 5282"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "ruff"]
+
+[project.scripts]
+il-energy = "il_energy.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/il_energy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require EnergyPlus installation",
+]

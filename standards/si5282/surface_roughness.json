@@ -1,0 +1,7 @@
+{
+  "terrain_categories": [
+    {"type": "open", "description_he": "שטחים פתוחים", "description_en": "Open areas with few obstacles", "kr": 0.190, "z0_m": 0.05},
+    {"type": "suburban", "description_he": "פרוורי ערים, אזורי תעשייה", "description_en": "Suburban/industrial/forest", "kr": 0.215, "z0_m": 0.3},
+    {"type": "urban", "description_he": "שטחים עירוניים", "description_en": "Urban, >=15% buildings >=15m height", "kr": 0.234, "z0_m": 1.0}
+  ]
+}

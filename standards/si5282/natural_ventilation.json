@@ -1,0 +1,33 @@
+{
+  "ventilation_methods": {
+    "simple": {"ach": 3, "conditions": "All openings in exterior walls, >=4% of net floor area"},
+    "prescriptive": {"ach": 5, "conditions": "Openings on 2 parallel or perpendicular walls, distance <= 5h"},
+    "computational": {
+      "formula": "N = vz * 3600 * Cw * Awv * IN / V",
+      "parameters": ["vz", "Cw", "Awv", "IN", "V"]
+    },
+    "performance": {
+      "ep_method": "AirflowNetwork CALCULATED",
+      "notes": "EnergyPlus computes hourly ACH automatically"
+    }
+  },
+  "minimum_opening_area_ratio": 0.04,
+  "opening_design_area_factors": {
+    "window_operable_no_screen": 0.333,
+    "window_operable_with_screen": 0.167,
+    "dedicated_auto_controlled": 1.0
+  },
+  "one_side_ventilation": {
+    "max_distance_to_opposite_wall": "2h",
+    "ach": 3
+  },
+  "two_side_parallel_ventilation": {
+    "max_distance_between_walls": "5h",
+    "ach": 5,
+    "ventilated_area_if_exceeds": "2h from each wall"
+  },
+  "two_side_perpendicular_ventilation": {
+    "max_distance_to_opposite_wall": "2h",
+    "ach": 5
+  }
+}

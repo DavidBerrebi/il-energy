@@ -1,0 +1,20 @@
+{
+  "standard": "SI 5282 Part 1",
+  "amendment": 1,
+  "date": "2024-11",
+  "rating_grades": [
+    {"min_ip_percent": 40, "grade": "A+", "name_he": "יהלום", "name_en": "Diamond", "score": 5},
+    {"min_ip_percent": 30, "grade": "A", "name_he": "פלטינה", "name_en": "Platinum", "score": 4},
+    {"min_ip_percent": 20, "grade": "B", "name_he": "זהב", "name_en": "Gold", "score": 3},
+    {"min_ip_percent": 10, "grade": "C", "name_he": "כסף", "name_en": "Silver", "score": 2},
+    {"min_ip_percent": 0, "grade": "D", "name_he": "ארד", "name_en": "Bronze", "score": 1},
+    {"min_ip_percent": -10, "grade": "E", "name_he": "דרגת בסיס", "name_en": "Base Grade", "score": 0},
+    {"below_ip_percent": -10, "grade": "F", "name_he": "לא עומד", "name_en": "Below Base", "score": -1}
+  ],
+  "building_rating_formula": {
+    "formula": "GB = sum(unit_area * unit_score) / sum(unit_area) + ventilation_bonus",
+    "rounding": "nearest_integer",
+    "new_building_rule": "If ANY unit is F, entire building is F",
+    "existing_building_rule": "F units contribute score -1 to weighted average"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "cardinal_directions": {
+    "north":     {"min_deg": 337.5, "max_deg": 22.5},
+    "northeast": {"min_deg": 22.5, "max_deg": 67.5},
+    "east":      {"min_deg": 67.5, "max_deg": 112.5},
+    "southeast": {"min_deg": 112.5, "max_deg": 157.5},
+    "south":     {"min_deg": 157.5, "max_deg": 202.5},
+    "southwest": {"min_deg": 202.5, "max_deg": 247.5},
+    "west":      {"min_deg": 247.5, "max_deg": 292.5},
+    "northwest": {"min_deg": 292.5, "max_deg": 337.5}
+  },
+  "sectors": {
+    "northern": {"center": 0, "range": "337.5-22.5"},
+    "eastern":  {"center": 90, "range": "22.5-157.5"},
+    "southern": {"center": 180, "range": "157.5-202.5"},
+    "western":  {"center": 270, "range": "202.5-337.5"}
+  },
+  "surface_color_classification": {
+    "light":  {"max_absorption": 0.35},
+    "medium": {"min_absorption": 0.35, "max_absorption": 0.55},
+    "dark":   {"min_absorption": 0.55}
+  }
+}

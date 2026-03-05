@@ -1,0 +1,34 @@
+{
+  "airflow_network": {
+    "simulation_control": {
+      "airflow_network_control": "MultizoneWithoutDistribution",
+      "wind_pressure_coefficient_type": "Input",
+      "height_selection": "OpeningHeight"
+    },
+    "surface": {
+      "ventilation_control_mode": "Temperature",
+      "minimum_venting_open_factor": 1,
+      "indoor_outdoor_temp_diff_lower_limit": 1,
+      "indoor_outdoor_temp_diff_upper_limit": 7,
+      "venting_schedule": "summer_night_20to07"
+    },
+    "detailed_opening": {
+      "air_mass_flow_closed_kg_s_m": 0.00000001,
+      "num_opening_factor_sets": 2,
+      "discharge_coefficient_no_screen": 1.0,
+      "discharge_coefficient_with_screen": 0.5,
+      "width_factor_sliding_horizontal": 0.33,
+      "height_factor_sliding_horizontal": 0.33,
+      "width_factor_sliding_vertical": 1,
+      "height_factor_sliding_vertical": 1
+    }
+  },
+  "infiltration": {
+    "method": "AirChanges/Hour",
+    "ach": 1.0,
+    "schedule": "inverse_of_ventilation_schedule",
+    "notes": "Set via DesignSpecification:OutdoorAir, NOT via AirflowNetwork envelope leakage"
+  },
+  "hvac_system": "ZoneHVAC:IdealLoadsAirSystem",
+  "computation_defaults": "Use simulation engine defaults for all algorithm parameters (Section 4.6.2)"
+}

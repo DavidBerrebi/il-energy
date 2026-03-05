@@ -1,0 +1,11 @@
+{
+  "ventilation_benefit_vb": [
+    {"max_nac": 1, "vb": 0.0},
+    {"max_nac": 3, "vb": 0.10},
+    {"max_nac": 5, "vb": 0.12},
+    {"max_nac": 10, "vb": 0.16},
+    {"above_nac": 10, "vb": 0.20}
+  ],
+  "simple_method_ach": 3,
+  "prescriptive_method_ach": 5
+}

@@ -1,0 +1,8 @@
+{
+  "aluminum_no_thermal_break": [
+    {"min_area_m2": 1.0, "max_area_m2": 2.5, "projection_mm": 51.8, "u_value_w_m2k": 10.19},
+    {"min_area_m2": 2.5, "max_area_m2": 4.8, "projection_mm": 75.1, "u_value_w_m2k": 9.72},
+    {"min_area_m2": 4.8, "max_area_m2": null, "projection_mm": 84.5, "u_value_w_m2k": 11.56}
+  ],
+  "absorption_coefficient": 0.90
+}
