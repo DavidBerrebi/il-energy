@@ -172,3 +172,39 @@ class SimulationOutput(BaseModel):
     envelope_windows: List[WindowSurface] = Field(default_factory=list)
     zones: List[ZoneEnergy] = Field(default_factory=list)
     flats: List[FlatEnergy] = Field(default_factory=list)
+
+
+# --- SI 5282 Rating ---
+
+
+class HValueRow(BaseModel):
+    """End-use energy normalized per m² for proposed vs reference comparison."""
+
+    end_use: str
+    proposed_kwh_m2: float = 0.0
+    reference_kwh_m2: float = 0.0
+    delta_kwh_m2: float = 0.0
+
+
+class GradeInfo(BaseModel):
+    """SI 5282 energy grade and score."""
+
+    grade: str = ""
+    name_en: str = ""
+    name_he: str = ""
+    score: int = 0
+    ip_range: str = ""
+
+
+class ComparisonResult(BaseModel):
+    """SI 5282 rating comparison between proposed and reference buildings."""
+
+    climate_zone: str = ""
+    conditioned_area_m2: float = 0.0
+    proposed: dict = Field(default_factory=dict)  # {site_kwh, eui_kwh_m2}
+    reference: dict = Field(default_factory=dict)  # {site_kwh, eui_kwh_m2}
+    ip_percent: float = 0.0
+    grade: GradeInfo = Field(default_factory=GradeInfo)
+    h_values: List[HValueRow] = Field(default_factory=list)
+    reference_u_values_estimated: bool = True
+    notes: List[str] = Field(default_factory=list)

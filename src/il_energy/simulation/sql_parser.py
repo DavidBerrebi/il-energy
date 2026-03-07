@@ -126,25 +126,33 @@ class SQLParser:
 
     # --- Site / Source Energy ---
 
-    def parse_site_energy_gj(self) -> float:
-        """Total site energy in GJ."""
-        val = self._get_tabular_value(
+    def _parse_energy_gj(self, row_name: str) -> float:
+        """Read an energy value from Site and Source Energy table, return GJ.
+
+        Handles both kWh and GJ units stored in the SQL (EP varies by output settings).
+        """
+        rows = self._query_tabular(
             "AnnualBuildingUtilityPerformanceSummary",
             "Site and Source Energy",
-            "Total Site Energy",
+            row_name,
             "Total Energy",
         )
-        return _safe_float(val)
+        if not rows:
+            return 0.0
+        r = rows[0]
+        value = _safe_float(r["Value"])
+        units = (r["Units"] or "").strip()
+        if units == "kWh":
+            return value / GJ_TO_KWH  # convert kWh → GJ
+        return value  # assume GJ
+
+    def parse_site_energy_gj(self) -> float:
+        """Total site energy in GJ."""
+        return self._parse_energy_gj("Total Site Energy")
 
     def parse_source_energy_gj(self) -> float:
         """Total source energy in GJ."""
-        val = self._get_tabular_value(
-            "AnnualBuildingUtilityPerformanceSummary",
-            "Site and Source Energy",
-            "Total Source Energy",
-            "Total Energy",
-        )
-        return _safe_float(val)
+        return self._parse_energy_gj("Total Source Energy")
 
     # --- End Uses ---
 
@@ -153,12 +161,22 @@ class SQLParser:
         report = "AnnualBuildingUtilityPerformanceSummary"
         table = "End Uses"
 
-        # End uses are in GJ in the SQL output
         def _get_enduse(row_name: str) -> float:
-            """Sum across all fuel types for an end use (GJ → kWh)."""
+            """Sum across all fuel types for an end use.
+
+            Filters by energy units only (GJ or kWh). Skips peak demand rows (W).
+            Converts GJ → kWh; passes kWh through as-is.
+            """
             rows = self._query_tabular(report, table, row_name)
-            total_gj = sum(_safe_float(r["Value"]) for r in rows)
-            return total_gj * GJ_TO_KWH
+            total_kwh = 0.0
+            for r in rows:
+                units = (r["Units"] or "").strip()
+                if units == "GJ":
+                    total_kwh += _safe_float(r["Value"]) * GJ_TO_KWH
+                elif units == "kWh":
+                    total_kwh += _safe_float(r["Value"])
+                # skip W, W/m2, and any other non-energy units
+            return total_kwh
 
         heating = _get_enduse("Heating")
         cooling = _get_enduse("Cooling")
