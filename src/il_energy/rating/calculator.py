@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from il_energy.exceptions import ILEnergyError
-from il_energy.models import SimulationOutput
+from il_energy.models import FlatEnergy, SimulationOutput
 
 
 def compute_ip(proposed_eui: float, reference_eui: float) -> float:
@@ -79,6 +79,51 @@ def grade_from_ip(ip_percent: float) -> Dict[str, object]:
         "score": -1,
         "ip_range": "< -10%",
     }
+
+
+def compute_unit_ratings(
+    flats: List[FlatEnergy],
+    ep_ref_by_floor_type: Dict[str, float],
+    cop: float = 3.0,
+) -> List[Dict[str, object]]:
+    """Compute per-unit SI 5282 Part 1 ratings.
+
+    Args:
+        flats: Aggregated flat energy data (from zone_aggregator).
+        ep_ref_by_floor_type: EPref [kWh/m²/yr electrical] keyed by floor type
+            ("ground", "middle", "top").  Pass the same value for all keys if
+            a single EPref applies to all floors.
+        cop: HVAC coefficient of performance (default 3.0).
+
+    Returns:
+        List of dicts, one per flat, sorted by flat_id:
+            flat_id, floor_number, floor_type, area_m2,
+            cooling_kwh, heating_kwh, hvac_kwh,
+            ep_des_kwh_m2, ep_ref_kwh_m2, ip_percent, grade (dict)
+    """
+    results = []
+    for flat in sorted(flats, key=lambda f: f.flat_id):
+        if flat.floor_area_m2 <= 0:
+            continue
+        hvac_kwh = flat.cooling_kwh + flat.heating_kwh
+        ep_des = hvac_kwh / cop / flat.floor_area_m2
+        ep_ref = ep_ref_by_floor_type.get(flat.floor_type,
+                 ep_ref_by_floor_type.get("middle", 0.0))
+        ip = compute_ip(ep_des, ep_ref)
+        results.append({
+            "flat_id": flat.flat_id,
+            "floor_number": flat.floor_number,
+            "floor_type": flat.floor_type,
+            "area_m2": flat.floor_area_m2,
+            "cooling_kwh": flat.cooling_kwh,
+            "heating_kwh": flat.heating_kwh,
+            "hvac_kwh": hvac_kwh,
+            "ep_des_kwh_m2": ep_des,
+            "ep_ref_kwh_m2": ep_ref,
+            "ip_percent": ip,
+            "grade": grade_from_ip(ip),
+        })
+    return results
 
 
 class ComparisonNotAvailableError(ILEnergyError):

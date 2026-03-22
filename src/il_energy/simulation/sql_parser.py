@@ -294,69 +294,120 @@ class SQLParser:
     # --- Zone-Level Energy (from ReportData) ---
 
     def parse_zone_energy(self) -> list[ZoneEnergy]:
-        """Extract zone-level energy from ReportData tables.
+        """Extract zone-level annual HVAC energy from ReportData tables.
 
-        Looks for IdealLoads heating/cooling variables per zone.
+        Supports two retrieval strategies (tried in order):
+        1. Annual energy (J) variables: ``*Ideal Loads*Energy*``
+        2. Run-Period averaged rate (W) variables: ``*Ideal Loads*Cooling/Heating Rate``
+           Converted to kWh using avg_W × 8760 h / 1000.
+
+        Zone floor area is taken from the ``Zones`` table when available,
+        falling back to the Zone Summary tabular report.
         """
-        try:
-            # Get zone info
-            zones_sql = "SELECT ZoneIndex, ZoneName, FloorArea FROM Zones"
-            zone_rows = self._conn.execute(zones_sql).fetchall()
-        except sqlite3.OperationalError:
-            return []
-
-        if not zone_rows:
-            return []
-
-        # Build zone lookup
+        # ── Build zone lookup (floor area from Zones table if present) ──────────
         zones: dict[str, ZoneEnergy] = {}
-        for zr in zone_rows:
-            name = zr["ZoneName"]
-            zones[name.upper()] = ZoneEnergy(
-                zone_name=name,
-                floor_area_m2=_safe_float(str(zr["FloorArea"])),
-            )
-
-        # Query ReportDataDictionary for ideal loads variables
         try:
-            rdd_sql = """
-                SELECT ReportDataDictionaryIndex, KeyValue, Name
-                FROM ReportDataDictionary
-                WHERE Name LIKE '%Ideal Loads%Energy%'
-                AND IsMeter = 0
-            """
-            rdd_rows = self._conn.execute(rdd_sql).fetchall()
+            zone_rows = self._conn.execute(
+                "SELECT ZoneName, FloorArea FROM Zones"
+            ).fetchall()
+            for zr in zone_rows:
+                name = zr["ZoneName"]
+                zones[name.upper()] = ZoneEnergy(
+                    zone_name=name,
+                    floor_area_m2=_safe_float(str(zr["FloorArea"])),
+                )
         except sqlite3.OperationalError:
-            return list(zones.values())
+            pass
 
-        for rdd in rdd_rows:
-            key = rdd["KeyValue"].upper()
-            var_name = rdd["Name"].upper()
-            idx = rdd["ReportDataDictionaryIndex"]
+        # Fall back: derive zones from tabular Zone Summary
+        if not zones:
+            try:
+                tab_rows = self._conn.execute(
+                    """SELECT RowName, Value FROM TabularDataWithStrings
+                       WHERE ReportName='InputVerificationandResultsSummary'
+                         AND TableName='Zone Summary'
+                         AND ColumnName='Area'"""
+                ).fetchall()
+                for tr in tab_rows:
+                    name = tr["RowName"]
+                    # Skip aggregate summary rows
+                    if name in ("Conditioned Total", "Unconditioned Total",
+                                "Not Part of Total", "Total"):
+                        continue
+                    zones[name.upper()] = ZoneEnergy(
+                        zone_name=name,
+                        floor_area_m2=_safe_float(tr["Value"]),
+                    )
+            except sqlite3.OperationalError:
+                return []
 
-            # Find matching zone (key might be "ZONE_NAME IDEAL LOADS")
-            matched_zone = None
-            for zname in zones:
-                if key.startswith(zname):
-                    matched_zone = zname
-                    break
+        if not zones:
+            return []
 
-            if matched_zone is None:
-                continue
+        # ── Strategy 1: look for annual energy (J) variables ────────────────────
+        try:
+            rdd_energy = self._conn.execute(
+                """SELECT ReportDataDictionaryIndex, KeyValue, Name
+                   FROM ReportDataDictionary
+                   WHERE Name LIKE '%Ideal Loads%Energy%'
+                   AND IsMeter = 0"""
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rdd_energy = []
 
-            # Sum annual energy (Joules → kWh)
-            total_j = self._conn.execute(
-                "SELECT SUM(Value) FROM ReportData WHERE ReportDataDictionaryIndex=?",
-                (idx,),
-            ).fetchone()[0] or 0.0
-            total_kwh = total_j / 3_600_000.0
+        if rdd_energy:
+            for rdd in rdd_energy:
+                key = rdd["KeyValue"].upper()
+                var_name = rdd["Name"].upper()
+                idx = rdd["ReportDataDictionaryIndex"]
+                matched = next((z for z in zones if key.startswith(z)), None)
+                if matched is None:
+                    continue
+                total_j = self._conn.execute(
+                    "SELECT SUM(Value) FROM ReportData WHERE ReportDataDictionaryIndex=?",
+                    (idx,),
+                ).fetchone()[0] or 0.0
+                total_kwh = total_j / 3_600_000.0
+                if "HEATING" in var_name:
+                    zones[matched].heating_kwh += total_kwh
+                elif "COOLING" in var_name:
+                    zones[matched].cooling_kwh += total_kwh
+        else:
+            # ── Strategy 2: Run-Period avg W → kWh ──────────────────────────────
+            # Variable names: "Zone Ideal Loads Supply Air Total Heating Rate" (W)
+            #                 "Zone Ideal Loads Supply Air Total Cooling Rate" (W)
+            # Stored as time-weighted average over run period → kWh = avg_W × 8760 / 1000
+            try:
+                rdd_rate = self._conn.execute(
+                    """SELECT ReportDataDictionaryIndex, KeyValue, Name
+                       FROM ReportDataDictionary
+                       WHERE Name LIKE 'Zone Ideal Loads Supply Air Total%Rate'
+                       AND ReportingFrequency = 'Run Period'
+                       AND IsMeter = 0"""
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rdd_rate = []
 
-            if "HEATING" in var_name:
-                zones[matched_zone].heating_kwh += total_kwh
-            elif "COOLING" in var_name:
-                zones[matched_zone].cooling_kwh += total_kwh
+            for rdd in rdd_rate:
+                key = rdd["KeyValue"].upper()
+                var_name = rdd["Name"].upper()
+                idx = rdd["ReportDataDictionaryIndex"]
+                matched = next((z for z in zones if key.startswith(z)), None)
+                if matched is None:
+                    continue
+                avg_w = self._conn.execute(
+                    "SELECT Value FROM ReportData WHERE ReportDataDictionaryIndex=? LIMIT 1",
+                    (idx,),
+                ).fetchone()
+                if avg_w is None:
+                    continue
+                annual_kwh = float(avg_w[0]) * 8760.0 / 1000.0
+                if "HEATING" in var_name:
+                    zones[matched].heating_kwh += annual_kwh
+                elif "COOLING" in var_name:
+                    zones[matched].cooling_kwh += annual_kwh
 
-        # Compute totals
+        # ── Compute totals ───────────────────────────────────────────────────────
         for z in zones.values():
             z.total_kwh = z.heating_kwh + z.cooling_kwh + z.lighting_kwh + z.equipment_kwh
 

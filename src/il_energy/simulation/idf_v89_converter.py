@@ -1,6 +1,6 @@
-"""Convert DesignBuilder EP 8.9 IDF to EP 25.x compatible format.
+"""Convert DesignBuilder EP 8.9 / EP 9.x IDFs to EP 25.x compatible format.
 
-Key changes handled:
+EP 8.9 key changes (convert_v89_idf):
 1. BuildingSurface:Detailed: insert blank "Space Name" field after Zone Name.
 2. FenestrationSurface:Detailed: remove inline "Shading Control Name" field.
 3. WindowProperty:ShadingControl → WindowShadingControl (zone-based, lists windows).
@@ -10,6 +10,11 @@ Key changes handled:
 6. ShadowCalculation: rename method values; insert new Update Frequency Method field.
 7. People: ZoneAveraged → EnclosureAveraged (MRT calculation type).
 8. Version: update to 25.2.
+
+EP 9.x additional changes (convert_v9x_idf):
+1. BuildingSurface:Detailed: same Space Name insertion (not present in EP 9.x).
+2. People: ZoneAveraged → EnclosureAveraged (same as 8.9).
+3. Version: update to 25.2.
 """
 
 from __future__ import annotations
@@ -285,6 +290,40 @@ def convert_v89_idf(text: str) -> str:
     text = re.sub(r"\bZoneAveraged\b", "EnclosureAveraged", text, flags=re.IGNORECASE)
 
     # ── Step 13: Fix version string ────────────────────────────────────────────
+    text = re.sub(r"Version,\s*[\d.]+\s*;", "Version, 25.2;", text)
+
+    return text
+
+
+def convert_v9x_idf(text: str) -> str:
+    """Convert EP 9.x IDF text to EP 25.x compatible format.
+
+    EP 9.x IDFs already have WindowShadingControl, RunPeriod Year fields,
+    PolygonClipping ShadowCalculation, etc.  Only three fixes are needed:
+      1. BuildingSurface:Detailed — insert blank Space Name after Zone Name.
+      2. People — ZoneAveraged → EnclosureAveraged.
+      3. Version — update to 25.2.
+    """
+    # ── Fix BuildingSurface:Detailed — insert blank Space Name ────────────────
+    bsd_block_pat = re.compile(
+        r"(BuildingSurface:Detailed\s*,.*?;)",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    def _add_space_name(m: re.Match) -> str:
+        block = m.group(1)
+        return re.sub(
+            r"(,\s*!-\s*Zone Name\b[^\n]*\n)",
+            r"\1      ,                                           !- Space Name\n",
+            block,
+        )
+
+    text = bsd_block_pat.sub(_add_space_name, text)
+
+    # ── Fix People — ZoneAveraged → EnclosureAveraged ─────────────────────────
+    text = re.sub(r"\bZoneAveraged\b", "EnclosureAveraged", text, flags=re.IGNORECASE)
+
+    # ── Fix version string ─────────────────────────────────────────────────────
     text = re.sub(r"Version,\s*[\d.]+\s*;", "Version, 25.2;", text)
 
     return text

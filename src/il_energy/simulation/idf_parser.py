@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from il_energy.exceptions import IDFError
-from il_energy.simulation.idf_v89_converter import convert_v89_idf
+from il_energy.simulation.idf_v89_converter import convert_v89_idf, convert_v9x_idf
 
 # Objects to inject if missing
 _OUTPUT_SQLITE = "\nOutput:SQLite,\n  SimpleAndTabular;\n"
@@ -33,9 +33,14 @@ def ensure_sql_output(idf_path: Path) -> Path:
 
     content = idf_path.read_text(encoding="utf-8", errors="replace")
 
-    # Auto-convert EP 8.x IDFs to EP 25.x format
-    if re.search(r"Version\s*,\s*8\.", content, re.IGNORECASE):
-        content = convert_v89_idf(content)
+    # Auto-convert older IDFs to EP 25.x format
+    version_match = re.search(r"Version\s*,\s*(\d+)\.", content, re.IGNORECASE)
+    if version_match:
+        major = int(version_match.group(1))
+        if major == 8:
+            content = convert_v89_idf(content)
+        elif major == 9:
+            content = convert_v9x_idf(content)
 
     injections: list[str] = []
 

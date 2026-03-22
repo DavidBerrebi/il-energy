@@ -110,6 +110,9 @@ class FlatEnergy(BaseModel):
 
     flat_id: str
     zones: List[str] = Field(default_factory=list)
+    floor_number: Optional[int] = None      # 0-based floor index (None if unknown)
+    floor_type: str = "middle"              # ground / middle / top (for EPref selection)
+    orientation: str = ""                   # dominant orientation (if determinable)
     floor_area_m2: float = 0.0
     heating_kwh: float = 0.0
     cooling_kwh: float = 0.0

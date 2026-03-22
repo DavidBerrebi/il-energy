@@ -12,9 +12,10 @@ from il_energy.config import EnergyPlusConfig
 from il_energy.models import SimulationRequest
 from il_energy.postprocessing.metrics import extract_metrics
 from il_energy.postprocessing.zone_aggregator import aggregate_zones_to_flats
-from il_energy.rating.calculator import compare_simulations, compute_ip, grade_from_ip
+from il_energy.rating.calculator import compare_simulations, compute_ip, compute_unit_ratings, grade_from_ip
 from il_energy.reference.box_generator import generate_reference_box_idf
 from il_energy.reference.generator import generate_reference_idf
+from il_energy.report.generator import generate_residential_report
 from il_energy.simulation.runner import run_simulation
 
 
@@ -301,7 +302,7 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
     ep_ref = avg_ref_hvac / COP / BOX_AREA  # kWh/m²/yr electrical
     click.echo(f"\n   EPref (avg HVAC/COP/100m²): {ep_ref:.2f} kWh/m²/yr\n")
 
-    # ── 3. Rating ────────────────────────────────────────────────────────────
+    # ── 3. Building-level rating ──────────────────────────────────────────────
     ip_percent = compute_ip(ep_des, ep_ref)
     grade_info = grade_from_ip(ip_percent)
 
@@ -315,6 +316,29 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
     click.echo(f"\nIMPROVEMENT PERCENTAGE (IP): {ip_percent:+.1f}%")
     click.echo(f"GRADE: {grade_info['grade']} ({grade_info['name_en']} / {grade_info['name_he']})")
 
+    # ── 4. Per-unit rating ────────────────────────────────────────────────────
+    flats = aggregate_zones_to_flats(proposed_metrics.zones)
+    ep_ref_by_floor: dict = {"ground": ep_ref, "middle": ep_ref, "top": ep_ref}
+    unit_ratings = compute_unit_ratings(flats, ep_ref_by_floor, cop=COP)
+
+    if unit_ratings:
+        click.echo(f"\n{'─'*80}")
+        click.echo(f"PER-UNIT RATINGS ({len(unit_ratings)} units)")
+        click.echo(f"{'─'*80}")
+        click.echo(f"{'Unit':<12} {'Floor':<7} {'Type':<8} {'Area':>6} {'EPdes':>7} {'EPref':>7} {'IP%':>7} {'Grade':<8}")
+        click.echo(f"{'─'*80}")
+        grade_counts: dict = {}
+        for u in unit_ratings:
+            g = u['grade']['grade']
+            grade_counts[g] = grade_counts.get(g, 0) + 1
+            click.echo(
+                f"{u['flat_id']:<12} {str(u['floor_number']):<7} {u['floor_type']:<8} "
+                f"{u['area_m2']:>6.1f} {u['ep_des_kwh_m2']:>7.2f} {u['ep_ref_kwh_m2']:>7.2f} "
+                f"{u['ip_percent']:>+7.1f} {g:<8}"
+            )
+        click.echo(f"{'─'*80}")
+        click.echo("Grade distribution: " + "  ".join(f"{g}:{n}" for g, n in sorted(grade_counts.items())))
+
     result = {
         "standard": "SI 5282 Part 1",
         "climate_zone": zone,
@@ -327,6 +351,7 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
         "ref_box_hvac_by_orientation": dict(zip(orientations.keys(), ref_hvac_values)),
         "cop": COP,
         "reference_unit_area_m2": BOX_AREA,
+        "unit_ratings": unit_ratings,
         "notes": [
             "EPdes = (cooling + heating kWh) / COP / conditioned area",
             "EPref = average of 4 orientations (N/E/S/W) / COP / 100 m²",
@@ -337,6 +362,22 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, default=str)
     click.echo(f"\nResults written to: {json_path}")
+
+    # ── 5. Professional report ────────────────────────────────────────────────
+    click.echo("\n5. Generating professional report...")
+    try:
+        project_name = idf_path.stem
+        report_paths = generate_residential_report(
+            rating_result=result,
+            output=proposed_metrics,
+            output_dir=out_path,
+            project_name=project_name,
+        )
+        click.echo(f"   ✓ {report_paths['report_md'].name}")
+        click.echo(f"   ✓ {report_paths['units_csv'].name}")
+        click.echo(f"   ✓ {report_paths['windows_csv'].name}")
+    except Exception as e:
+        click.echo(f"   Report generation failed: {e}", err=True)
 
 
 if __name__ == "__main__":
