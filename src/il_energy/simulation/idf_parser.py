@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from il_energy.exceptions import IDFError
+from il_energy.simulation.idf_v89_converter import convert_v89_idf
 
 # Objects to inject if missing
 _OUTPUT_SQLITE = "\nOutput:SQLite,\n  SimpleAndTabular;\n"
@@ -31,6 +32,11 @@ def ensure_sql_output(idf_path: Path) -> Path:
         raise IDFError(f"IDF file not found: {idf_path}")
 
     content = idf_path.read_text(encoding="utf-8", errors="replace")
+
+    # Auto-convert EP 8.x IDFs to EP 25.x format
+    if re.search(r"Version\s*,\s*8\.", content, re.IGNORECASE):
+        content = convert_v89_idf(content)
+
     injections: list[str] = []
 
     if not _has_object(content, "Output:SQLite"):

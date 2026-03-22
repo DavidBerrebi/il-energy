@@ -181,8 +181,9 @@ def compare_simulations(
     })
 
     notes: List[str] = [
-        "Reference U-values are ESTIMATED (Grade D/E boundary, Zone B).",
-        "Exact values require SI 5282 Tables G-1, D-1, D-3 from the full standard.",
+        f"Reference U-values from SI 5282 Part 1, Table G-1 (February 2023), Zone {climate_zone}.",
+        "Reference building uses proposed geometry with standard reference constructions (commercial approximation).",
+        "Residential standard (Part 1) specifies a 100 m2 box reference unit — see reference/generator.py for details.",
     ]
 
     return {
@@ -199,6 +200,6 @@ def compare_simulations(
         "ip_percent": ip_percent,
         "grade": grade_info,
         "h_values": h_values,
-        "reference_u_values_estimated": True,
+        "reference_u_values_estimated": False,
         "notes": notes,
     }

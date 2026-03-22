@@ -3,10 +3,23 @@
 Strategy:
 - Same geometry, zones, schedules, occupancy, HVAC as proposed
 - Replace the exterior opaque constructions with reference U-value constructions
-- Reference U-values are looked up by climate zone from REFERENCE_U_VALUES
+- Reference U-values are taken from SI 5282 Part 1 Table ג-1 (February 2023)
 
-NOTE: Reference U-values for Zone B are ESTIMATED (Grade D/E boundary).
-Exact values require SI 5282 Tables G-1, D-1, D-3 from the full standard.
+IMPORTANT — Reference building methodology note:
+  SI 5282 Part 1 (residential) defines the reference unit (יחידת הייחוס) as a
+  standardized 100 m² box (10×10×3 m) with one glazed wall (U=4.0, SHGC=0.63),
+  run 4 times facing each cardinal direction, EPref = average ÷ COP (3.0).
+  This generator instead applies the reference construction R-values from Table ג-1
+  to the PROPOSED building's geometry — an approximation suitable for commercial
+  buildings (SI 5282 Part 2) or for a quick first-pass on residential buildings.
+
+Zone naming — this file uses the Amendment naming convention:
+  Zone A = Eilat (extreme hot-arid)   → maps to Standard Part 1 Zone D
+  Zone B = Tel Aviv coastal (hot-humid) → maps to Standard Part 1 Zone A
+  Zone C = Jerusalem (temperate)       → maps to Standard Part 1 Zone C
+
+Source: SI 5282 Part 1, Table ג-1, page 43. R-values are material resistance
+[m²K/W] without film. U_with_film = 1 / (r_material + R_FILMS).
 """
 
 from __future__ import annotations
@@ -25,31 +38,44 @@ R_FILMS = 0.17
 # Keys are substrings matched against construction names (case-insensitive).
 # More specific keys should come first.
 #
-# ESTIMATED values for Zone B (Tel Aviv area), Grade D/E boundary.
-# Full standard tables (G-1, D-1, D-3) will replace these estimates.
+# Source: SI 5282 Part 1, Table ג-1 (February 2023), page 43.
+# R_material values (m²K/W) from the standard, converted to U_with_film using:
+#   U = 1 / (r_material + R_FILMS)  where R_FILMS = 0.17 m²K/W
+#
+# Zone mapping (this file → SI 5282 Part 1 standard zone):
+#   Our A (Eilat)     → Standard Zone D: r_wall=0.89, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
+#   Our B (Tel Aviv)  → Standard Zone A: r_wall=0.63, r_roof=1.51, r_open_floor=0.67, r_ground=0.68
+#   Our C (Jerusalem) → Standard Zone C: r_wall=0.80, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
+#
+# Note: "top ceiling" (roof) has r=1.51 for ALL zones in the standard —
+# the reference roof is INSULATED (55mm insulation + 140mm concrete slab).
 REFERENCE_U_VALUES: Dict[str, Dict[str, float]] = {
+    # Zone B (Tel Aviv coastal, hot-humid) → Standard Part 1 Zone A
+    # r_wall=0.63, r_roof=1.51, r_open_floor=0.67, r_ground=0.68
     "B": {
-        "extwall":      1.20,   # Exterior wall (uninsulated concrete block)
-        "extwallmamad": 1.20,   # Mamad/safe-room wall
-        "flatroof":     1.30,   # Flat roof (uninsulated concrete slab)
-        "groundfloor":  1.50,   # Ground floor (slab-on-grade)
-        "extfloor":     1.30,   # Semi-exposed floor
+        "extwall":      round(1.0 / (0.63 + R_FILMS), 4),  # 1.2500 W/m²K  (22cm concrete block, no added insulation)
+        "extwallmamad": round(1.0 / (0.63 + R_FILMS), 4),  # 1.2500 W/m²K  (same as extwall)
+        "flatroof":     round(1.0 / (1.51 + R_FILMS), 4),  # 0.5952 W/m²K  (insulated: 55mm XPS + 140mm slab)
+        "groundfloor":  round(1.0 / (0.68 + R_FILMS), 4),  # 1.1765 W/m²K  (20mm insulation + 200mm slab; all zones same)
+        "extfloor":     round(1.0 / (0.67 + R_FILMS), 4),  # 1.1905 W/m²K  (floor above open space, Zone A value)
     },
-    # Zone A (hot-arid, Eilat) — placeholder, requires standard tables
+    # Zone A (Eilat, extreme hot-arid) → Standard Part 1 Zone D
+    # r_wall=0.89, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
     "A": {
-        "extwall":      1.40,
-        "extwallmamad": 1.40,
-        "flatroof":     1.40,
-        "groundfloor":  1.60,
-        "extfloor":     1.40,
+        "extwall":      round(1.0 / (0.89 + R_FILMS), 4),  # 0.9434 W/m²K  (29cm concrete block)
+        "extwallmamad": round(1.0 / (0.89 + R_FILMS), 4),  # 0.9434 W/m²K
+        "flatroof":     round(1.0 / (1.51 + R_FILMS), 4),  # 0.5952 W/m²K  (same for all zones)
+        "groundfloor":  round(1.0 / (0.68 + R_FILMS), 4),  # 1.1765 W/m²K  (all zones same)
+        "extfloor":     round(1.0 / (1.04 + R_FILMS), 4),  # 0.8264 W/m²K  (Zone D value, same as Zone C)
     },
-    # Zone C (temperate, Jerusalem) — placeholder, requires standard tables
+    # Zone C (Jerusalem, temperate) → Standard Part 1 Zone C
+    # r_wall=0.80, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
     "C": {
-        "extwall":      0.80,
-        "extwallmamad": 0.80,
-        "flatroof":     0.70,
-        "groundfloor":  1.20,
-        "extfloor":     0.80,
+        "extwall":      round(1.0 / (0.80 + R_FILMS), 4),  # 1.0309 W/m²K  (26cm concrete block)
+        "extwallmamad": round(1.0 / (0.80 + R_FILMS), 4),  # 1.0309 W/m²K
+        "flatroof":     round(1.0 / (1.51 + R_FILMS), 4),  # 0.5952 W/m²K  (same for all zones)
+        "groundfloor":  round(1.0 / (0.68 + R_FILMS), 4),  # 1.1765 W/m²K  (all zones same)
+        "extfloor":     round(1.0 / (1.04 + R_FILMS), 4),  # 0.8264 W/m²K  (Zone C/D value)
     },
 }
 
@@ -86,7 +112,7 @@ def _build_ref_objects(
         "",
         "! ============================================================",
         f"! SI 5282 Reference Building Constructions — Climate Zone {zone}",
-        "! VALUES ARE ESTIMATED — awaiting full standard Tables G-1, D-1, D-3",
+        "! U-values from SI 5282 Part 1, Table G-1 (February 2023), page 43",
         "! ============================================================",
         "",
     ]
@@ -269,5 +295,5 @@ def generate_reference_idf(
         "climate_zone": climate_zone,
         "replacements": counts,
         "constructions": constructions_info,
-        "u_values_estimated": True,  # Until full standard tables are available
+        "u_values_estimated": False,  # From SI 5282 Part 1 Table ג-1 (Feb 2023)
     }
