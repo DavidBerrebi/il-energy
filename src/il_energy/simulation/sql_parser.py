@@ -374,14 +374,17 @@ class SQLParser:
                     zones[matched].cooling_kwh += total_kwh
         else:
             # ── Strategy 2: Run-Period avg W → kWh ──────────────────────────────
-            # Variable names: "Zone Ideal Loads Supply Air Total Heating Rate" (W)
-            #                 "Zone Ideal Loads Supply Air Total Cooling Rate" (W)
+            # Use SENSIBLE rates only to match EP 9.x / EVERGREEN methodology.
+            # EP 25.2 reports latent dehumidification loads via the Total rate
+            # that EP 9.x did not compute; using Sensible ensures consistency.
+            # Variable names: "Zone Ideal Loads Supply Air Sensible Heating Rate" (W)
+            #                 "Zone Ideal Loads Supply Air Sensible Cooling Rate" (W)
             # Stored as time-weighted average over run period → kWh = avg_W × 8760 / 1000
             try:
                 rdd_rate = self._conn.execute(
                     """SELECT ReportDataDictionaryIndex, KeyValue, Name
                        FROM ReportDataDictionary
-                       WHERE Name LIKE 'Zone Ideal Loads Supply Air Total%Rate'
+                       WHERE Name LIKE 'Zone Ideal Loads Supply Air Sensible%Rate'
                        AND ReportingFrequency = 'Run Period'
                        AND IsMeter = 0"""
                 ).fetchall()

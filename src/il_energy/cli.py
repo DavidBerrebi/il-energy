@@ -17,6 +17,7 @@ from il_energy.reference.box_generator import generate_reference_box_idf
 from il_energy.reference.generator import generate_reference_idf
 from il_energy.report.generator import generate_residential_report
 from il_energy.simulation.runner import run_simulation
+from il_energy.simulation.si5282_preprocessor import apply_si5282_reference_conditions
 
 
 @click.group()
@@ -252,10 +253,20 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
         click.echo(f"Configuration error: {e}", err=True)
         sys.exit(1)
 
-    # ── 1. Proposed building simulation ─────────────────────────────────────
-    click.echo("1. Running proposed building simulation...")
+    # ── 1. Apply SI 5282 reference conditions ────────────────────────────────
+    click.echo("1. Applying SI 5282 reference operating conditions...")
+    with open(idf_path, encoding="latin-1") as f:
+        idf_raw = f.read()
+    idf_preprocessed = apply_si5282_reference_conditions(idf_raw)
+    preprocessed_idf_path = out_path / "proposed_si5282.idf"
+    with open(preprocessed_idf_path, "w", encoding="latin-1") as f:
+        f.write(idf_preprocessed)
+    click.echo(f"   Preprocessed IDF written to: {preprocessed_idf_path}\n")
+
+    # ── 2. Proposed building simulation ─────────────────────────────────────
+    click.echo("2. Running proposed building simulation (with SI 5282 conditions)...")
     proposed_dir = out_path / "proposed"
-    proposed_req = SimulationRequest(idf_path=idf_path, epw_path=epw_path, output_dir=proposed_dir)
+    proposed_req = SimulationRequest(idf_path=preprocessed_idf_path, epw_path=epw_path, output_dir=proposed_dir)
     try:
         proposed_result = run_simulation(proposed_req, config)
     except Exception as e:
@@ -269,15 +280,22 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, floor_ty
         click.echo("Error: proposed building has zero conditioned area.", err=True)
         sys.exit(1)
 
-    hvac_proposed = proposed_metrics.end_uses.heating_kwh + proposed_metrics.end_uses.cooling_kwh
+    # Compute EPdes from zone-level sensible HVAC (matches EP 9.x / EVERGREEN).
+    # EP 25.2 end_uses totals include latent dehumidification loads that EP 9.x
+    # did not compute; zone sums use sensible rates (see sql_parser Strategy 2).
+    flats_for_ep = proposed_metrics.zones  # ZoneEnergy list (sensible only)
+    hvac_proposed = (
+        sum(z.cooling_kwh for z in flats_for_ep)
+        + sum(z.heating_kwh for z in flats_for_ep)
+    )
     ep_des = hvac_proposed / COP / cond_area  # kWh/m²/yr electrical
 
     click.echo(f"   Conditioned area: {cond_area:.1f} m²")
     click.echo(f"   HVAC thermal: {hvac_proposed / cond_area:.2f} kWh/m²/yr")
     click.echo(f"   EPdes (HVAC/COP/area): {ep_des:.2f} kWh/m²/yr\n")
 
-    # ── 2. Reference box — 4 orientations ───────────────────────────────────
-    click.echo("2. Running reference unit (100 m² box) — 4 orientations...")
+    # ── 3. Reference box — 4 orientations ───────────────────────────────────
+    click.echo("3. Running reference unit (100 m² box) — 4 orientations...")
     orientations = {"S": 0.0, "W": 90.0, "N": 180.0, "E": 270.0}
     ref_hvac_values = []
 
