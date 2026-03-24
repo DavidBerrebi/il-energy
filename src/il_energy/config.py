@@ -93,3 +93,63 @@ class EnergyPlusConfig:
 
 # Default timeout for EnergyPlus simulations (seconds)
 SIMULATION_TIMEOUT = 3600
+
+
+# ── SI 5282 climate zone detection from EPW ───────────────────────────────────
+
+# WMO station → SI 5282 zone (our A/B/C naming)
+_WMO_ZONE_MAP = {
+    "401990": "A",  # Eilat-Hozman (hot arid)
+    "401920": "A",  # Sedom / Dead Sea
+    "401880": "A",  # Beersheba (hot semi-arid)
+    "401800": "B",  # Tel Aviv Ben Gurion (coastal)
+    "401762": "B",  # Tel Aviv Sde Dov (coastal)
+    "401550": "B",  # Haifa (coastal)
+    "401710": "B",  # Ashkelon / coastal south
+    "401839": "C",  # Jerusalem center
+    "401830": "C",  # Jerusalem
+    "401410": "C",  # Safed (highland north)
+}
+
+
+def detect_zone_from_epw(epw_path: "Path") -> str:
+    """Detect SI 5282 climate zone (A/B/C) from an EPW file's LOCATION header.
+
+    Priority:
+    1. Known WMO station ID lookup
+    2. Heuristic from latitude + elevation:
+       elevation > 400 m → C  (highland: Jerusalem, Safed)
+       latitude < 30.5°N → A  (hot arid south: Eilat, Negev)
+       otherwise → B           (coastal / central lowlands)
+
+    Returns "B" if the file cannot be read.
+    """
+    try:
+        with open(epw_path, encoding="latin-1") as f:
+            first_line = f.readline().strip()
+    except OSError:
+        return "B"
+
+    if not first_line.upper().startswith("LOCATION"):
+        return "B"
+
+    parts = first_line.split(",")
+    # LOCATION,City,State,Country,DataSource,WMO,Lat,Lon,TZ,Elevation
+    if len(parts) < 10:
+        return "B"
+
+    wmo = parts[5].strip()
+    if wmo in _WMO_ZONE_MAP:
+        return _WMO_ZONE_MAP[wmo]
+
+    try:
+        lat = float(parts[6].strip())
+        elev = float(parts[9].strip())
+    except (ValueError, IndexError):
+        return "B"
+
+    if elev > 400.0:
+        return "C"
+    if lat < 30.5:
+        return "A"
+    return "B"

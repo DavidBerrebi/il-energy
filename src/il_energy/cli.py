@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from il_energy.config import EnergyPlusConfig
+from il_energy.config import EnergyPlusConfig, detect_zone_from_epw
 from il_energy.models import SimulationRequest
 from il_energy.postprocessing.metrics import extract_metrics
 from il_energy.postprocessing.zone_aggregator import aggregate_zones_to_flats, override_floor_types_from_surfaces
@@ -101,7 +101,7 @@ def parse(sql: str, output: str):
 @click.option("--idf", required=True, type=click.Path(exists=True), help="Path to proposed IDF file")
 @click.option("--epw", required=True, type=click.Path(exists=True), help="Path to EPW weather file")
 @click.option("--output-dir", required=True, type=click.Path(), help="Output directory for comparison results")
-@click.option("--zone", default="B", help="SI 5282 climate zone (A, B, or C). Default: B")
+@click.option("--zone", default=None, help="SI 5282 climate zone (A/B/C). Auto-detected from EPW if omitted.")
 def compare(idf: str, epw: str, output_dir: str, zone: str):
     """Compare proposed building against SI 5282 reference building.
 
@@ -113,6 +113,10 @@ def compare(idf: str, epw: str, output_dir: str, zone: str):
     epw_path = Path(epw).resolve()
     out_path = Path(output_dir).resolve()
     out_path.mkdir(parents=True, exist_ok=True)
+
+    if zone is None:
+        zone = detect_zone_from_epw(epw_path)
+        click.echo(f"Climate zone auto-detected from EPW: {zone}")
 
     click.echo(f"SI 5282 Comparison (Zone {zone})")
     click.echo(f"  Proposed IDF: {idf_path}")
@@ -219,7 +223,7 @@ def compare(idf: str, epw: str, output_dir: str, zone: str):
 @click.option("--idf", required=True, type=click.Path(exists=True), help="Proposed building IDF")
 @click.option("--epw", required=True, type=click.Path(exists=True), help="EPW weather file")
 @click.option("--output-dir", required=True, type=click.Path(), help="Output directory")
-@click.option("--zone", default="B", help="SI 5282 climate zone (A/B/C). Default: B")
+@click.option("--zone", default=None, help="SI 5282 climate zone (A/B/C). Auto-detected from EPW if omitted.")
 def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
     """SI 5282 Part 1 residential comparison using the standard reference unit.
 
@@ -238,6 +242,10 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
     epw_path = Path(epw).resolve()
     out_path = Path(output_dir).resolve()
     out_path.mkdir(parents=True, exist_ok=True)
+
+    if zone is None:
+        zone = detect_zone_from_epw(epw_path)
+        click.echo(f"Climate zone auto-detected from EPW: {zone}")
 
     click.echo(f"SI 5282 Part 1 Residential Comparison (Zone {zone})")
     click.echo(f"  Proposed IDF: {idf_path}")
