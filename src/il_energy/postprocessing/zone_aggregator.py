@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Dict, List, Optional, Tuple
 
-from il_energy.models import FlatEnergy, ZoneEnergy
+from il_energy.models import EnvelopeSurface, FlatEnergy, ZoneEnergy
 
 
 def _parse_flat_and_floor(zone_name: str) -> Tuple[Optional[str], Optional[int]]:
@@ -114,3 +114,40 @@ def aggregate_zones_to_flats(
             flat.total_kwh_per_m2 = flat.total_kwh / flat.floor_area_m2
 
     return list(flat_map.values())
+
+
+def override_floor_types_from_surfaces(
+    flats: List[FlatEnergy],
+    surfaces: List[EnvelopeSurface],
+) -> None:
+    """Override flat floor_type based on actual roof/floor surfaces.
+
+    Upgrades floor_type in-place for flats that have horizontal roof surfaces
+    (penthouse units, setbacks) or exposed underside floors — even when their
+    floor number is not min/max.
+
+    Rules:
+      - Any zone in the flat has an exterior opaque surface with tilt < 10°
+        (nearly horizontal ceiling facing up) → promote to "top"
+      - Any zone in the flat has an exterior opaque surface with tilt > 170°
+        (nearly horizontal floor facing down) → promote to "open"
+    """
+    # Build zone→flat_id lookup
+    zone_to_flat: Dict[str, str] = {}
+    for flat in flats:
+        for z in flat.zones:
+            zone_to_flat[z.upper()] = flat.flat_id
+
+    flat_by_id: Dict[str, FlatEnergy] = {f.flat_id: f for f in flats}
+
+    for surf in surfaces:
+        if surf.tilt_deg is None or surf.adjacency != "Exterior":
+            continue  # only true exterior surfaces indicate roof/open-floor exposure
+        flat_id = zone_to_flat.get(surf.zone.upper())
+        if flat_id is None:
+            continue
+        flat = flat_by_id[flat_id]
+        if surf.tilt_deg < 10.0:
+            flat.floor_type = "top"
+        elif surf.tilt_deg > 170.0 and flat.floor_type == "middle":
+            flat.floor_type = "open"

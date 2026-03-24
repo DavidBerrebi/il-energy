@@ -206,32 +206,33 @@ class SQLParser:
     # --- Envelope: Opaque Surfaces ---
 
     def parse_opaque_surfaces(self) -> list[EnvelopeSurface]:
-        """Extract opaque exterior surface data."""
+        """Extract opaque exterior and semi-exterior surface data."""
         report = "EnvelopeSummary"
-        table = "Opaque Exterior"
-
-        # Get all unique surface names
-        rows = self._query_tabular(report, table)
-        surfaces: dict[str, dict[str, str]] = {}
-        for r in rows:
-            name = r["RowName"]
-            if name.startswith("Total") or name.startswith("North Total") or name.startswith("Non-North"):
-                continue
-            if name not in surfaces:
-                surfaces[name] = {}
-            surfaces[name][r["ColumnName"]] = r["Value"]
-
         result = []
-        for name, data in surfaces.items():
-            result.append(EnvelopeSurface(
-                name=name,
-                construction=data.get("Construction", ""),
-                zone=data.get("Zone", ""),
-                u_factor_w_m2k=_safe_float(data.get("U-Factor with Film")) if "U-Factor with Film" in data else None,
-                gross_area_m2=_safe_float(data.get("Gross Area")) if "Gross Area" in data else None,
-                azimuth_deg=_safe_float(data.get("Azimuth")) if "Azimuth" in data else None,
-                tilt_deg=_safe_float(data.get("Tilt")) if "Tilt" in data else None,
-            ))
+
+        for table, adjacency in [("Opaque Exterior", "Exterior"), ("Opaque Semi-Exterior", "Semi-Exterior")]:
+            rows = self._query_tabular(report, table)
+            surfaces: dict[str, dict[str, str]] = {}
+            for r in rows:
+                name = r["RowName"]
+                if name.startswith("Total") or name.startswith("North Total") or name.startswith("Non-North"):
+                    continue
+                if name not in surfaces:
+                    surfaces[name] = {}
+                surfaces[name][r["ColumnName"]] = r["Value"]
+
+            for name, data in surfaces.items():
+                result.append(EnvelopeSurface(
+                    name=name,
+                    construction=data.get("Construction", ""),
+                    zone=data.get("Zone", ""),
+                    adjacency=adjacency,
+                    u_factor_w_m2k=_safe_float(data.get("U-Factor with Film")) if "U-Factor with Film" in data else None,
+                    gross_area_m2=_safe_float(data.get("Gross Area")) if "Gross Area" in data else None,
+                    azimuth_deg=_safe_float(data.get("Azimuth")) if "Azimuth" in data else None,
+                    tilt_deg=_safe_float(data.get("Tilt")) if "Tilt" in data else None,
+                ))
+
         return result
 
     # --- Envelope: Windows ---

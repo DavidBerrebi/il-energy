@@ -61,11 +61,12 @@ class EnergyEndUse(BaseModel):
 
 
 class EnvelopeSurface(BaseModel):
-    """Opaque exterior surface from the Envelope Summary."""
+    """Opaque exterior or semi-exterior surface from the Envelope Summary."""
 
     name: str
     construction: str = ""
     zone: str = ""
+    adjacency: str = "Exterior"  # "Exterior" or "Semi-Exterior"
     u_factor_w_m2k: Optional[float] = None
     gross_area_m2: Optional[float] = None
     azimuth_deg: Optional[float] = None

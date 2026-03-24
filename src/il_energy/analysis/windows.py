@@ -92,6 +92,8 @@ def build_window_records(
     flat_window_area: Dict[str, float] = {}
 
     for surf in output.envelope_opaque:
+        if surf.adjacency != "Exterior":
+            continue  # semi-exterior walls excluded from WWR denominator
         if surf.tilt_deg is None or surf.tilt_deg < 45:
             continue  # skip horizontal surfaces (roofs, floors)
         fid = _zone_to_flat(surf.zone)
@@ -119,7 +121,7 @@ def build_window_records(
             "Unit Area {m2}": f"{flat_area.get(fid, 0.0):.2f}",
             "Surface Name": surf.name,
             "Construction": surf.construction,
-            "Adjacency": "Exterior",
+            "Adjacency": surf.adjacency,
             "Area (Net) {m2}": f"{surf.gross_area_m2:.2f}" if surf.gross_area_m2 else "",
             "Um": f"{surf.u_factor_w_m2k:.2f}" if surf.u_factor_w_m2k else "",
             "Glass SHGC": "",
