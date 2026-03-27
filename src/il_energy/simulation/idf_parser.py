@@ -31,7 +31,9 @@ def ensure_sql_output(idf_path: Path) -> Path:
     if not idf_path.is_file():
         raise IDFError(f"IDF file not found: {idf_path}")
 
-    content = idf_path.read_text(encoding="utf-8", errors="replace")
+    original = idf_path.read_text(encoding="utf-8", errors="replace")
+    content = original
+    converted = False
 
     # Auto-convert older IDFs to EP 25.x format
     version_match = re.search(r"Version\s*,\s*(\d+)\.", content, re.IGNORECASE)
@@ -39,8 +41,10 @@ def ensure_sql_output(idf_path: Path) -> Path:
         major = int(version_match.group(1))
         if major == 8:
             content = convert_v89_idf(content)
+            converted = True
         elif major == 9:
             content = convert_v9x_idf(content)
+            converted = True
 
     injections: list[str] = []
 
@@ -53,7 +57,7 @@ def ensure_sql_output(idf_path: Path) -> Path:
     if not _has_object(content, "OutputControl:Table:Style"):
         injections.append(_OUTPUT_TABLE_STYLE)
 
-    if not injections:
+    if not injections and not converted:
         return idf_path
 
     modified = content + "\n" + "\n".join(injections)

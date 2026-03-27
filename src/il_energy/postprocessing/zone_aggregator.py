@@ -119,18 +119,24 @@ def aggregate_zones_to_flats(
 def override_floor_types_from_surfaces(
     flats: List[FlatEnergy],
     surfaces: List[EnvelopeSurface],
+    roof_ratio_threshold: float = 0.50,
 ) -> None:
     """Override flat floor_type based on actual roof/floor surfaces.
 
-    Upgrades floor_type in-place for flats that have horizontal roof surfaces
-    (penthouse units, setbacks) or exposed underside floors — even when their
-    floor number is not min/max.
+    Upgrades floor_type in-place for flats that have a significant exposed
+    horizontal roof (penthouse / setback units) — even when their floor number
+    is not the building maximum.
 
-    Rules:
-      - Any zone in the flat has an exterior opaque surface with tilt < 10°
-        (nearly horizontal ceiling facing up) → promote to "top"
-      - Any zone in the flat has an exterior opaque surface with tilt > 170°
-        (nearly horizontal floor facing down) → promote to "open"
+    A flat is promoted to "top" only when the total area of exterior horizontal
+    surfaces (tilt < 10°) belonging to its zones exceeds ``roof_ratio_threshold``
+    of the flat's floor area.  This avoids false-positives from small balcony
+    ceiling slabs or tiny roof offsets.
+
+    Args:
+        flats: Flat list to update in-place.
+        surfaces: Opaque exterior surfaces from the SQL parser.
+        roof_ratio_threshold: Minimum (exposed_roof_area / flat_floor_area) to
+            trigger a "top" promotion.  Default 0.50 (50 %).
     """
     # Build zone→flat_id lookup
     zone_to_flat: Dict[str, str] = {}
@@ -140,14 +146,23 @@ def override_floor_types_from_surfaces(
 
     flat_by_id: Dict[str, FlatEnergy] = {f.flat_id: f for f in flats}
 
+    # Accumulate exposed roof area per flat
+    roof_area_by_flat: Dict[str, float] = {}
     for surf in surfaces:
         if surf.tilt_deg is None or surf.adjacency != "Exterior":
-            continue  # only true exterior surfaces indicate roof/open-floor exposure
+            continue
         flat_id = zone_to_flat.get(surf.zone.upper())
         if flat_id is None:
             continue
-        flat = flat_by_id[flat_id]
         if surf.tilt_deg < 10.0:
+            roof_area_by_flat[flat_id] = (
+                roof_area_by_flat.get(flat_id, 0.0) + (surf.gross_area_m2 or 0.0)
+            )
+
+    # Promote flats whose roof area / floor area exceeds the threshold
+    for flat_id, roof_area in roof_area_by_flat.items():
+        flat = flat_by_id.get(flat_id)
+        if flat is None or flat.floor_area_m2 <= 0:
+            continue
+        if roof_area / flat.floor_area_m2 >= roof_ratio_threshold:
             flat.floor_type = "top"
-        elif surf.tilt_deg > 170.0 and flat.floor_type == "middle":
-            flat.floor_type = "open"

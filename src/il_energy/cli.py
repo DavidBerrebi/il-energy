@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -18,6 +19,79 @@ from il_energy.reference.generator import generate_reference_idf
 from il_energy.report.generator import generate_residential_report
 from il_energy.simulation.runner import run_simulation
 from il_energy.simulation.si5282_preprocessor import apply_si5282_reference_conditions
+
+
+# Reference window material values per SI 5282 Part 1, Table ג-1
+_REF_WINDOW_U = {"A": 4.0, "B": 4.0, "C": 4.0}    # W/m²K
+_REF_WINDOW_SHGC = {"A": 0.63, "B": 0.63, "C": 0.63}  # Solar Heat Gain Coefficient
+
+
+def _replace_window_materials(idf_text: str, climate_zone: str) -> str:
+    """Replace all WindowMaterial:SimpleGlazingSystem U-Factor and SHGC with
+    SI 5282 Table ג-1 reference values in-place.
+
+    All window constructions get the same reference values, preserving the
+    window geometry (area) and orientations unchanged.
+    """
+    u_ref = _REF_WINDOW_U[climate_zone]
+    shgc_ref = _REF_WINDOW_SHGC[climate_zone]
+
+    def _patch_block(m: re.Match) -> str:
+        block = m.group(0)
+        # Replace U-Factor field (2nd numeric field after Name)
+        block = re.sub(
+            r"(WindowMaterial:SimpleGlazingSystem,.*?;)",
+            lambda b: _patch_simple_glazing(b.group(1), u_ref, shgc_ref),
+            block,
+            flags=re.DOTALL,
+        )
+        return block
+
+    # Replace U and SHGC in each SimpleGlazingSystem block
+    return re.sub(
+        r"WindowMaterial:SimpleGlazingSystem,.*?;",
+        lambda m: _patch_simple_glazing(m.group(0), u_ref, shgc_ref),
+        idf_text,
+        flags=re.DOTALL,
+    )
+
+
+def _patch_simple_glazing(block: str, u_ref: float, shgc_ref: float) -> str:
+    """Patch a single WindowMaterial:SimpleGlazingSystem block.
+
+    The IDF object format is:
+        WindowMaterial:SimpleGlazingSystem,
+            <Name>,          !- Name
+            <U-Factor>,      !- U-Factor {W/m2-K}
+            <SHGC>,          !- Solar Heat Gain Coefficient
+            [<VT>];          !- Visible Transmittance (optional)
+    """
+    lines = block.split("\n")
+    field_idx = 0  # tracks comma-separated fields after the object type
+    result = []
+    for line in lines:
+        # Count commas/semicolons to know which field we're on
+        stripped = line.strip()
+        if re.match(r"WindowMaterial:SimpleGlazingSystem\s*,", stripped, re.IGNORECASE):
+            result.append(line)
+            continue
+        # Each non-comment line with a value is a field
+        if stripped and not stripped.startswith("!"):
+            val_match = re.match(r"^(\s*)([^,;!]+)([,;])(.*)", line)
+            if val_match:
+                indent, val, sep, rest = val_match.groups()
+                field_idx += 1
+                if field_idx == 1:  # Name — keep
+                    result.append(line)
+                elif field_idx == 2:  # U-Factor
+                    result.append(f"{indent}{u_ref}{sep}{rest}")
+                elif field_idx == 3:  # SHGC
+                    result.append(f"{indent}{shgc_ref}{sep}{rest}")
+                else:
+                    result.append(line)
+                continue
+        result.append(line)
+    return "\n".join(result)
 
 
 @click.group()
@@ -224,7 +298,9 @@ def compare(idf: str, epw: str, output_dir: str, zone: str):
 @click.option("--epw", required=True, type=click.Path(exists=True), help="EPW weather file")
 @click.option("--output-dir", required=True, type=click.Path(), help="Output directory")
 @click.option("--zone", default=None, help="SI 5282 climate zone (A/B/C). Auto-detected from EPW if omitted.")
-def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
+@click.option("--simulate-epref", is_flag=True, default=False,
+              help="Force reference-box simulation for EPref instead of tabulated values.")
+def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate_epref: bool):
     """SI 5282 Part 1 residential comparison using the standard reference unit.
 
     Runs the proposed building simulation and the standardized 100 m² reference
@@ -236,7 +312,6 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
     IP    = (EPref - EPdes) / EPref * 100 %
     """
     COP = 3.0
-    BOX_AREA = 100.0  # m²
 
     idf_path = Path(idf).resolve()
     epw_path = Path(epw).resolve()
@@ -299,39 +374,99 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
     click.echo(f"   HVAC thermal: {hvac_proposed / cond_area:.2f} kWh/m²/yr")
     click.echo(f"   EPdes (HVAC/COP/area): {ep_des:.2f} kWh/m²/yr\n")
 
-    # ── 3. Reference box — 3 floor types × 4 orientations (12 runs) ─────────
-    click.echo("3. Running reference unit (100 m² box) — 3 floor types × 4 orientations...")
-    orientations = {"S": 0.0, "W": 90.0, "N": 180.0, "E": 270.0}
-    floor_types_ref = ["ground", "middle", "top"]
+    # ── 2b. Aggregate zones to flats early — needed for per-unit EPref ───────
+    flats = aggregate_zones_to_flats(proposed_metrics.zones)
+    # Apply roof-ratio override BEFORE EPref lookup so penthouse/setback units
+    # get the correct "top" EPref rather than the "middle" value.
+    override_floor_types_from_surfaces(flats, proposed_metrics.envelope_opaque)
+
+    # ── 3. EPref — tabulated (Zone B) or reference-box simulation (Zones A/C) ─
+    ep_ref_values_path = Path(__file__).parent.parent.parent / "standards" / "si5282" / "ep_ref_values.json"
+    with open(ep_ref_values_path, encoding="utf-8") as _f:
+        _ep_ref_data = json.load(_f)
+    zone_table = (_ep_ref_data.get("zones") or {}).get(zone)
+
+    ep_ref_by_flat_id: dict = {}
     ep_ref_by_floor_type: dict = {}
     ref_hvac_by_ft: dict = {}
 
-    for ft in floor_types_ref:
-        hvac_values_ft = []
-        for label, north_axis in orientations.items():
-            ref_idf_path = out_path / f"refbox_{ft}_{label}.idf"
-            ref_out_dir = out_path / f"refbox_{ft}_{label}"
-            generate_reference_box_idf(ref_idf_path, climate_zone=zone,
-                                       north_axis_deg=north_axis, floor_type=ft)
-            req = SimulationRequest(idf_path=ref_idf_path, epw_path=epw_path, output_dir=ref_out_dir)
-            try:
-                res = run_simulation(req, config)
-            except Exception as e:
-                click.echo(f"   Reference box {ft}/{label} failed: {e}", err=True)
-                sys.exit(1)
-            m = extract_metrics(res.sql_path)
-            hvac_thermal = m.end_uses.heating_kwh + m.end_uses.cooling_kwh
-            hvac_values_ft.append(hvac_thermal)
-            click.echo(f"   [{ft}/{label}] HVAC thermal: {hvac_thermal:.1f} kWh  "
-                       f"({hvac_thermal / BOX_AREA:.2f} kWh/m²)")
-        avg_hvac_ft = sum(hvac_values_ft) / len(hvac_values_ft)
-        ep_ref_by_floor_type[ft] = avg_hvac_ft / COP / BOX_AREA
-        ref_hvac_by_ft[ft] = dict(zip(orientations.keys(), hvac_values_ft))
-        click.echo(f"   EPref({ft}) = {ep_ref_by_floor_type[ft]:.2f} kWh/m²/yr")
+    if zone_table and not simulate_epref:
+        # ── Tabulated EPref for Zone B (calibrated against EVERGREEN v3.0.4) ──
+        click.echo(f"3. Using tabulated EPref values for Zone {zone} (EVERGREEN-calibrated)...")
+        threshold = zone_table.get("small_unit_threshold_m2", 50)
+        for ft in ("ground", "middle", "top"):
+            ft_data = zone_table.get(ft)
+            if not ft_data:
+                continue
+            ep_ref_by_floor_type[ft] = ft_data.get("standard", 0.0)
+        for flat in flats:
+            if flat.floor_area_m2 <= 0:
+                continue
+            ft_data = zone_table.get(flat.floor_type) or {}
+            if flat.floor_area_m2 <= threshold and "small_le50m2" in ft_data:
+                ep_ref_by_flat_id[flat.flat_id] = ft_data["small_le50m2"]
+            else:
+                ep_ref_by_flat_id[flat.flat_id] = ft_data.get("standard", 0.0)
+        for ft, val in ep_ref_by_floor_type.items():
+            click.echo(f"   EPref({ft}) = {val:.2f} kWh/m²/yr  [tabulated]")
+    else:
+        # ── Reference-box simulation: 3 floor types × 4 orientations = 12 runs ─
+        # Use fixed 100 m² standard box (SI 5282 Appendix ג).
+        # Small units (≤50 m²) also run a 50 m² box to get a size-corrected EPref.
+        orientations = {"S": 0.0, "W": 90.0, "N": 180.0, "E": 270.0}
+        floor_types = sorted({f.floor_type for f in flats if f.floor_area_m2 > 0})
+        SMALL_THRESHOLD = 50.0
+        BOX_STANDARD = 100.0
+        BOX_SMALL = 50.0
+        has_small = any(f.floor_area_m2 <= SMALL_THRESHOLD for f in flats if f.floor_area_m2 > 0)
+        box_sizes = [BOX_STANDARD] + ([BOX_SMALL] if has_small else [])
+        n_runs = len(floor_types) * len(box_sizes) * 4
+        click.echo(f"3. Running reference boxes — {len(floor_types)} floor types "
+                   f"× {len(box_sizes)} sizes × 4 orientations = {n_runs} runs...")
 
-    # Building-level EPref uses middle floor (most common for multi-story buildings)
-    ep_ref = ep_ref_by_floor_type["middle"]
-    click.echo(f"\n   EPref building-level (middle floor avg): {ep_ref:.2f} kWh/m²/yr\n")
+        # ep_ref_cache[(floor_type, box_size)] → EPref kWh/m²/yr
+        ep_ref_cache: dict[tuple, float] = {}
+
+        for ft in floor_types:
+            for box_area in box_sizes:
+                size_label = f"{int(box_area)}m2"
+                hvac_vals = []
+                for label, north_axis in orientations.items():
+                    ref_idf_path = out_path / f"refbox_{ft}_{size_label}_{label}.idf"
+                    ref_out_dir  = out_path / f"refbox_{ft}_{size_label}_{label}"
+                    generate_reference_box_idf(ref_idf_path, climate_zone=zone,
+                                               north_axis_deg=north_axis, floor_type=ft,
+                                               floor_area_m2=box_area)
+                    req = SimulationRequest(idf_path=ref_idf_path, epw_path=epw_path,
+                                           output_dir=ref_out_dir)
+                    try:
+                        res = run_simulation(req, config)
+                    except Exception as e:
+                        click.echo(f"   Reference box {ft}/{size_label}/{label} failed: {e}", err=True)
+                        sys.exit(1)
+                    m = extract_metrics(res.sql_path)
+                    hvac_thermal = m.end_uses.heating_kwh + m.end_uses.cooling_kwh
+                    hvac_vals.append(hvac_thermal)
+                    click.echo(f"   [{ft}/{size_label}/{label}] HVAC: {hvac_thermal:.1f} kWh "
+                               f"({hvac_thermal / box_area:.2f} kWh/m²)")
+                avg_hvac = sum(hvac_vals) / len(hvac_vals)
+                ep_ref_cache[(ft, box_area)] = avg_hvac / COP / box_area
+                ref_hvac_by_ft[f"{ft}_{size_label}"] = dict(zip(orientations.keys(), hvac_vals))
+                click.echo(f"   EPref({ft}, {size_label}) = {ep_ref_cache[(ft, box_area)]:.2f} kWh/m²/yr")
+
+        # Build per-flat EPref: small units use the 50 m² box, others use 100 m²
+        for flat in flats:
+            if flat.floor_area_m2 <= 0:
+                continue
+            box_size = BOX_SMALL if (has_small and flat.floor_area_m2 <= SMALL_THRESHOLD) else BOX_STANDARD
+            ep_ref_by_flat_id[flat.flat_id] = ep_ref_cache[(flat.floor_type, box_size)]
+
+        # Floor-type EPref for building-level display (standard 100 m² box)
+        for ft in floor_types:
+            ep_ref_by_floor_type[ft] = ep_ref_cache[(ft, BOX_STANDARD)]
+
+    ep_ref = ep_ref_by_floor_type.get("middle", 0.0)
+    click.echo(f"\n   EPref building-level (middle floor): {ep_ref:.2f} kWh/m²/yr\n")
 
     # ── 4. Building-level rating ──────────────────────────────────────────────
     ip_percent = compute_ip(ep_des, ep_ref)
@@ -348,9 +483,9 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
     click.echo(f"GRADE: {grade_info['grade']} ({grade_info['name_en']} / {grade_info['name_he']})")
 
     # ── 5. Per-unit rating ────────────────────────────────────────────────────
-    flats = aggregate_zones_to_flats(proposed_metrics.zones)
-    override_floor_types_from_surfaces(flats, proposed_metrics.envelope_opaque)
-    unit_ratings = compute_unit_ratings(flats, ep_ref_by_floor_type, cop=COP)
+    unit_ratings = compute_unit_ratings(
+        flats, ep_ref_by_floor_type, cop=COP, ep_ref_by_flat_id=ep_ref_by_flat_id
+    )
 
     if unit_ratings:
         click.echo(f"\n{'─'*80}")
@@ -380,13 +515,13 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str):
         "ip_percent": ip_percent,
         "grade": grade_info,
         "ref_box_hvac_by_floor_type": ref_hvac_by_ft,
+        "ep_ref_by_flat_id": ep_ref_by_flat_id,
         "cop": COP,
-        "reference_unit_area_m2": BOX_AREA,
         "unit_ratings": unit_ratings,
         "notes": [
             "EPdes = (cooling + heating kWh) / COP / conditioned area",
-            "EPref = average of 4 orientations (N/E/S/W) / COP / 100 m² per floor type",
-            "Building-level EPref uses middle floor type",
+            "EPref = average of 4 orientations (N/E/S/W) / COP / unit_area — run per flat area",
+            "Building-level EPref uses middle floor type at representative area",
             "Reference unit per SI 5282 Part 1 Appendix ג, Table ג-1",
         ],
     }

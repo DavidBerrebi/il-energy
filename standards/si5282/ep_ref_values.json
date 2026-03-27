@@ -1,0 +1,20 @@
+{
+  "_description": "Tabulated EPref values (kWh/m2/yr electrical) for SI 5282 Part 1 (2024 amendment).",
+  "_source": "Reverse-engineered from EVERGREEN v3.0.4 (EP 9.4) results on NILI Holon project, Zone B. Zones A and C: not yet calibrated — use reference-box simulation as fallback.",
+  "_notes": [
+    "EPref = reference HVAC energy / COP / area, averaged over 4 orientations.",
+    "Small unit threshold: area <= 50 m2 uses higher EPref (more wall per m2).",
+    "Floor type 'top' applies to units with roof exposed to outdoors (may not coincide with highest floor number — e.g. 05X3 in Nili is 'top' due to exposed roof).",
+    "01X4 in Nili gets expert EPref=40.12 (vs standard 38.04) — likely due to unconditioned parking below. Use 38.04 as default for all middle-floor standard units."
+  ],
+  "zones": {
+    "B": {
+      "ground":  { "standard": 28.94 },
+      "middle":  { "standard": 38.04, "small_le50m2": 44.89 },
+      "top":     { "standard": 41.34 },
+      "small_unit_threshold_m2": 50
+    },
+    "A": null,
+    "C": null
+  }
+}

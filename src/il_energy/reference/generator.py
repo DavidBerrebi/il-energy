@@ -95,6 +95,77 @@ def _match_construction_type(construction_name: str, zone: str) -> Optional[str]
     return None
 
 
+def _surface_type_to_ref_key(surface_type: str, boundary: str) -> Optional[str]:
+    """Map (EnergyPlus surface type, boundary condition) → reference key.
+
+    This allows construction identification based on how a surface is used
+    in the building model rather than by construction name keywords — making
+    the generator work regardless of the project's naming conventions.
+
+    surface_type: first field in the BSD "Class and Construction Name" line
+                  (e.g. "Wall", "Ceiling", "Floor", "Roof", "Window")
+    boundary:     first field in the "Outside Face Environment" line
+                  (e.g. "Outdoors", "Ground", "Surface", "OtherSideCoefficients")
+    """
+    st = surface_type.strip().lower()
+    bc = boundary.strip().lower()
+
+    if st == "wall" and bc == "outdoors":
+        return "extwall"
+    if st in ("ceiling", "roof") and bc == "outdoors":
+        return "flatroof"
+    if st == "floor" and bc == "ground":
+        return "groundfloor"
+    if st == "floor" and bc == "outdoors":
+        return "extfloor"
+    # Interior surfaces (Surface/OtherSide/Zone) — not replaced
+    return None
+
+
+def _parse_bsd_surface_info(block: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract (construction_name, surface_type, boundary_condition) from a BSD block.
+
+    Handles both standard (one-field-per-line) and compact (Type, Construction
+    on one line) DesignBuilder export formats.
+
+    Returns (construction_name, surface_type, boundary_condition).
+    Any or all may be None if not found.
+    """
+    lines = block.split("\n")
+    construction: Optional[str] = None
+    surface_type: Optional[str] = None
+    boundary: Optional[str] = None
+
+    for line in lines[1:]:
+        stripped = line.strip()
+        bang = stripped.find("!")
+        comment = stripped[bang:].lower() if bang >= 0 else ""
+        value_part = stripped[:bang].strip() if bang >= 0 else stripped
+
+        if "construction name" in comment:
+            # Could be "SurfaceType, ConstructionName" (compact) or just "ConstructionName"
+            fields = [f.strip().rstrip(",;") for f in value_part.split(",") if f.strip()]
+            if len(fields) >= 2:
+                surface_type = fields[0]
+                construction = fields[-1]
+            elif len(fields) == 1:
+                construction = fields[0]
+
+        elif "surface type" in comment or "class" in comment:
+            # Standard format where surface type is on its own line
+            fields = [f.strip().rstrip(",;") for f in value_part.split(",") if f.strip()]
+            if fields:
+                surface_type = fields[0]
+
+        elif "outside face" in comment or "boundary condition" in comment:
+            # "Surface, AdjacentSurfaceName" or "Outdoors" or "Ground"
+            fields = [f.strip().rstrip(",;") for f in value_part.split(",") if f.strip()]
+            if fields:
+                boundary = fields[0]
+
+    return construction, surface_type, boundary
+
+
 def _build_ref_objects(
     construction_map: Dict[str, Tuple[str, float]],
     zone: str,
@@ -140,11 +211,48 @@ def _build_ref_objects(
     return "\n".join(lines)
 
 
+def _extract_bsd_construction(lines: List[str]) -> Optional[str]:
+    """Extract construction name from a BuildingSurface:Detailed block's lines.
+
+    Handles two DesignBuilder export formats:
+      Standard (EP ≥ 8.x one-field-per-line):
+        lines[2] = Surface Type
+        lines[3] = Construction Name           ← single field
+      Compact (EP 9.x combined field):
+        lines[2] = "SurfaceType, ConstructionName,  !- Class and Construction Name"
+                                                ← two fields on one line
+
+    Returns the construction name string, or None if not found.
+    """
+    # Scan each line for a "Construction Name" comment clue
+    for line in lines[1:]:  # skip the 'BuildingSurface:Detailed,' header
+        stripped = line.strip()
+        bang = stripped.find("!")
+        comment = stripped[bang:].lower() if bang >= 0 else ""
+        if "construction name" in comment:
+            # Extract the value portion (before '!')
+            value_part = stripped[:bang] if bang >= 0 else stripped
+            fields = [f.strip().rstrip(",;") for f in value_part.split(",") if f.strip()]
+            if fields:
+                return fields[-1]  # last field = construction name (handles combined line)
+
+    # Fallback: standard format — construction name on line index 3
+    if len(lines) > 3:
+        name_match = re.search(r"^\s*([^,;!]+)", lines[3])
+        if name_match:
+            return name_match.group(1).strip()
+
+    return None
+
+
 def _replace_constructions_in_idf(
     text: str,
     construction_map: Dict[str, str],
 ) -> Tuple[str, Dict[str, int]]:
     """Replace construction names in BuildingSurface:Detailed objects.
+
+    Handles both standard (one-field-per-line) and compact (Type, Construction
+    on one line) DesignBuilder IDF export formats.
 
     Args:
         text: Full IDF text.
@@ -158,29 +266,39 @@ def _replace_constructions_in_idf(
     def _replace_block(m: re.Match) -> str:
         block = m.group(0)
         lines = block.split("\n")
-        # BuildingSurface:Detailed field layout (DesignBuilder IDF convention):
-        # line 0: "BuildingSurface:Detailed,"
-        # line 1: Name field
-        # line 2: Surface Type field
-        # line 3: Construction Name field  ← replace here
+
+        for i, line in enumerate(lines[1:], 1):  # skip header line
+            stripped = line.strip()
+            bang = stripped.find("!")
+            comment = stripped[bang:].lower() if bang >= 0 else ""
+            if "construction name" not in comment:
+                continue
+            # This line contains the construction name.
+            # Sort by length descending so longer (more specific) names match first,
+            # avoiding partial replacement of "EG_FOO BAR" when "EG_FOO" is also a key.
+            for proposed, ref in sorted(construction_map.items(), key=lambda kv: len(kv[0]), reverse=True):
+                pat = rf"(?<![A-Za-z0-9_]){re.escape(proposed)}(?![A-Za-z0-9_])"
+                if re.search(pat, line, re.IGNORECASE):
+                    lines[i] = re.sub(pat, ref, line, flags=re.IGNORECASE)
+                    counts[proposed] += 1
+                    return "\n".join(lines)  # only one construction per block
+            break  # found the construction line but no match — no further search
+
+        # Fallback: try line index 3 (standard format without comments)
         field_idx = 3
         if len(lines) > field_idx:
             line = lines[field_idx]
-            for proposed, ref in construction_map.items():
-                if re.search(rf"\b{re.escape(proposed)}\b", line, re.IGNORECASE):
-                    lines[field_idx] = re.sub(
-                        rf"\b{re.escape(proposed)}\b",
-                        ref,
-                        line,
-                        flags=re.IGNORECASE,
-                    )
+            for proposed, ref in sorted(construction_map.items(), key=lambda kv: len(kv[0]), reverse=True):
+                pat = rf"(?<![A-Za-z0-9_]){re.escape(proposed)}(?![A-Za-z0-9_])"
+                if re.search(pat, line, re.IGNORECASE):
+                    lines[field_idx] = re.sub(pat, ref, line, flags=re.IGNORECASE)
                     counts[proposed] += 1
                     break
         return "\n".join(lines)
 
     pattern = re.compile(
-        r"BuildingSurface:Detailed,.*?(?=\n\s*\n\s*[A-Za-z]|\Z)",
-        re.DOTALL,
+        r"BuildingSurface:Detailed\s*,[^;]+;",
+        re.DOTALL | re.IGNORECASE,
     )
     text = pattern.sub(_replace_block, text)
     return text, counts
@@ -225,47 +343,64 @@ def generate_reference_idf(
 
     text = proposed_idf.read_text(encoding="utf-8", errors="replace")
 
-    # Discover all unique construction names used in BuildingSurface:Detailed
+    # Discover constructions used in BuildingSurface:Detailed and map them to
+    # reference types using surface_type + boundary_condition analysis.
+    # This approach works regardless of construction naming conventions.
+    # Fallback to keyword matching for constructions whose surface context is
+    # ambiguous (e.g. old standard-format IDFs without comments).
+    #
+    # Use semicolons as block delimiters (every IDF object ends with ';') —
+    # more robust than blank-line lookahead since comment lines between blocks
+    # would break the blank-line pattern.
     bsd_pattern = re.compile(
-        r"BuildingSurface:Detailed,.*?(?=\n\s*\n\s*[A-Za-z]|\Z)",
-        re.DOTALL,
+        r"BuildingSurface:Detailed\s*,[^;]+;",
+        re.DOTALL | re.IGNORECASE,
     )
-    used_constructions: set = set()
+
+    # const_name → best ref_key found across all surfaces using this construction
+    const_ref_key: Dict[str, str] = {}
+
     for m in bsd_pattern.finditer(text):
-        lines = m.group(0).split("\n")
-        if len(lines) > 3:
-            line = lines[3]
-            # Extract construction name (value before comma or semicolon)
-            name_match = re.search(r"^\s*([^,;!]+)", line)
-            if name_match:
-                used_constructions.add(name_match.group(1).strip())
+        const_name, surf_type, boundary = _parse_bsd_surface_info(m.group(0))
+        if not const_name:
+            continue
 
-    if not used_constructions:
-        raise IDFError("No BuildingSurface:Detailed constructions found in IDF.")
+        # Primary: determine reference type from how the surface is used
+        ref_key: Optional[str] = None
+        if surf_type and boundary:
+            ref_key = _surface_type_to_ref_key(surf_type, boundary)
 
-    # Match each used construction to a reference U-value
+        # Fallback: keyword matching on construction name
+        if ref_key is None:
+            ref_key = _match_construction_type(const_name, climate_zone)
+
+        if ref_key is not None:
+            # If a construction is used as both an exterior wall and something else,
+            # prefer the existing assignment to avoid overwriting.
+            if const_name not in const_ref_key:
+                const_ref_key[const_name] = ref_key
+
+    if not const_ref_key:
+        raise IDFError(
+            f"No exterior opaque constructions found for zone {climate_zone}. "
+            "Expected exterior Wall/Ceiling/Floor surfaces in BuildingSurface:Detailed."
+        )
+
+    # Build construction map and info
     construction_map: Dict[str, str] = {}   # proposed_name → ref_name
     constructions_info: Dict[str, dict] = {}
 
-    for const_name in sorted(used_constructions):
-        key = _match_construction_type(const_name, climate_zone)
-        if key is None:
-            continue  # Not an exterior opaque construction we replace
-        u_target = REFERENCE_U_VALUES[climate_zone][key]
+    for const_name, ref_key in sorted(const_ref_key.items()):
+        u_target = REFERENCE_U_VALUES[climate_zone][ref_key]
         r_mat = max(0.01, 1.0 / u_target - R_FILMS)
-        ref_name = f"REF_{const_name}"
+        ref_name = f"REF_{ref_key.upper()}"  # e.g. REF_EXTWALL (shared across all walls)
         construction_map[const_name] = ref_name
         constructions_info[const_name] = {
             "ref_name": ref_name,
             "u_target": u_target,
             "r_mat": r_mat,
+            "ref_key": ref_key,
         }
-
-    if not construction_map:
-        raise IDFError(
-            f"No constructions matched reference U-value keywords for zone {climate_zone}. "
-            "Check that construction names contain keywords like 'extwall', 'flatroof', etc."
-        )
 
     # Build map of proposed_name → (ref_name, u_target) for object generation
     ref_obj_map = {

@@ -85,15 +85,19 @@ def compute_unit_ratings(
     flats: List[FlatEnergy],
     ep_ref_by_floor_type: Dict[str, float],
     cop: float = 3.0,
+    ep_ref_by_flat_id: Optional[Dict[str, float]] = None,
 ) -> List[Dict[str, object]]:
     """Compute per-unit SI 5282 Part 1 ratings.
 
     Args:
         flats: Aggregated flat energy data (from zone_aggregator).
         ep_ref_by_floor_type: EPref [kWh/m²/yr electrical] keyed by floor type
-            ("ground", "middle", "top").  Pass the same value for all keys if
-            a single EPref applies to all floors.
+            ("ground", "middle", "top").  Used as fallback when ep_ref_by_flat_id
+            is not provided or the flat is not in it.
         cop: HVAC coefficient of performance (default 3.0).
+        ep_ref_by_flat_id: Per-flat EPref [kWh/m²/yr electrical] keyed by flat_id.
+            When provided, takes precedence over ep_ref_by_floor_type for matching
+            flats (reference building geometry approach).
 
     Returns:
         List of dicts, one per flat, sorted by flat_id:
@@ -107,8 +111,11 @@ def compute_unit_ratings(
             continue
         hvac_kwh = flat.cooling_kwh + flat.heating_kwh
         ep_des = hvac_kwh / cop / flat.floor_area_m2
-        ep_ref = ep_ref_by_floor_type.get(flat.floor_type,
-                 ep_ref_by_floor_type.get("middle", 0.0))
+        if ep_ref_by_flat_id and flat.flat_id in ep_ref_by_flat_id:
+            ep_ref = ep_ref_by_flat_id[flat.flat_id]
+        else:
+            ep_ref = ep_ref_by_floor_type.get(flat.floor_type,
+                     ep_ref_by_floor_type.get("middle", 0.0))
         ip = compute_ip(ep_des, ep_ref)
         results.append({
             "flat_id": flat.flat_id,

@@ -18,6 +18,7 @@ Zone naming (our project → SI 5282 Part 1 standard):
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -101,6 +102,7 @@ def generate_reference_box_idf(
     climate_zone: str = "B",
     north_axis_deg: float = 0.0,
     floor_type: str = "middle",
+    floor_area_m2: float = 100.0,
     epw_path: Optional[Path] = None,
 ) -> None:
     """Write a SI 5282 Appendix ג reference unit IDF to output_idf.
@@ -112,12 +114,26 @@ def generate_reference_box_idf(
                         180=window N, 270=window E).
         floor_type: "middle" (adiabatic floor+ceiling), "top" (insulated roof),
                     "ground" (slab-on-grade floor), "open" (exposed floor).
+        floor_area_m2: Floor area of the reference unit in m² (default 100).
+                       The box is square with side = sqrt(floor_area_m2).
+                       Equipment and lighting scale with area; people and
+                       infiltration (ACH) are area-independent per SI 5282.
         epw_path: Unused — weather file is passed at runtime via CLI.
     """
     if climate_zone not in _R_VALUES:
         raise ValueError(f"Unsupported zone '{climate_zone}'. Use A, B, or C.")
 
     r = _R_VALUES[climate_zone]
+
+    # Geometry: square box with side = sqrt(area), height = 3 m
+    side = math.sqrt(floor_area_m2)
+    # Window: 80% of south wall width × 2.5 m tall (same WWR as default 100 m² box)
+    win_x0 = side * 0.1
+    win_x1 = side * 0.9
+    # Internal loads scale with floor area (W/m² basis per Table ג-2)
+    equip_low_w = floor_area_m2 * 1.0   # 1 W/m² during 0–16h
+    equip_high_w = floor_area_m2 * 9.0  # 9 W/m² during 16–24h
+    lights_w = floor_area_m2 * 2.0      # 2 W/m² during 17–24h
 
     # Determine roof and floor R-values based on floor type
     if floor_type == "top":
@@ -436,10 +452,10 @@ def generate_reference_box_idf(
 ! Vertex order: CounterClockWise when viewed from OUTSIDE (outward normal rule).
 ! Pattern from EP 1ZoneUncontrolled example: start at one corner at Z=H,
 ! go DOWN to Z=0, sweep along wall base, then go UP to Z=H.
-! South wall (Y=0, normal -Y): viewed from south, right=+X → start (X=0,Z=H)
-! East  wall (X=10, normal +X): viewed from east, right=+Y  → start (Y=0,Z=H)
-! North wall (Y=10, normal +Y): viewed from north, right=-X → start (X=10,Z=H)
-! West  wall (X=0,  normal -X): viewed from west, right=-Y  → start (Y=10,Z=H)
+! South wall (Y=0,    normal -Y): viewed from south, right=+X → start (X=0,Z=H)
+! East  wall (X=side, normal +X): viewed from east, right=+Y  → start (Y=0,Z=H)
+! North wall (Y=side, normal +Y): viewed from north, right=-X → start (X=side,Z=H)
+! West  wall (X=0,    normal -X): viewed from west, right=-Y  → start (Y=side,Z=H)
 
   BuildingSurface:Detailed,
     South_Wall,              !- Name
@@ -455,8 +471,8 @@ def generate_reference_box_idf(
     4,                       !- Number of Vertices
     0, 0, 3,
     0, 0, 0,
-    10, 0, 0,
-    10, 0, 3;
+    {side:.4f}, 0, 0,
+    {side:.4f}, 0, 3;
 
   BuildingSurface:Detailed,
     East_Wall,               !- Name
@@ -465,10 +481,10 @@ def generate_reference_box_idf(
     Outdoors, ,
     SunExposed, WindExposed,
     autocalculate, 4,
-    10, 0, 3,
-    10, 0, 0,
-    10, 10, 0,
-    10, 10, 3;
+    {side:.4f}, 0, 3,
+    {side:.4f}, 0, 0,
+    {side:.4f}, {side:.4f}, 0,
+    {side:.4f}, {side:.4f}, 3;
 
   BuildingSurface:Detailed,
     North_Wall,              !- Name
@@ -477,10 +493,10 @@ def generate_reference_box_idf(
     Outdoors, ,
     SunExposed, WindExposed,
     autocalculate, 4,
-    10, 10, 3,
-    10, 10, 0,
-    0, 10, 0,
-    0, 10, 3;
+    {side:.4f}, {side:.4f}, 3,
+    {side:.4f}, {side:.4f}, 0,
+    0, {side:.4f}, 0,
+    0, {side:.4f}, 3;
 
   BuildingSurface:Detailed,
     West_Wall,               !- Name
@@ -489,8 +505,8 @@ def generate_reference_box_idf(
     Outdoors, ,
     SunExposed, WindExposed,
     autocalculate, 4,
-    0, 10, 3,
-    0, 10, 0,
+    0, {side:.4f}, 3,
+    0, {side:.4f}, 0,
     0, 0, 0,
     0, 0, 3;
 
@@ -502,9 +518,9 @@ def generate_reference_box_idf(
     {ceiling_sun}, {ceiling_wind},
     autocalculate, 4,
     0, 0, 3,
-    10, 0, 3,
-    10, 10, 3,
-    0, 10, 3;
+    {side:.4f}, 0, 3,
+    {side:.4f}, {side:.4f}, 3,
+    0, {side:.4f}, 3;
 
   BuildingSurface:Detailed,
     Floor_Surf,              !- Name
@@ -513,13 +529,13 @@ def generate_reference_box_idf(
     {floor_bc}, {floor_obc_obj},
     {floor_sun}, {floor_wind},
     autocalculate, 4,
-    10, 0, 0,
+    {side:.4f}, 0, 0,
     0, 0, 0,
-    0, 10, 0,
-    10, 10, 0;
+    0, {side:.4f}, 0,
+    {side:.4f}, {side:.4f}, 0;
 
-! ── Window (South wall, 8m × 2.5m, centered) ────────────────────────────────────
-! X: 1.0 to 9.0 (centered in 10m wall), Z: 0.25 to 2.75
+! ── Window (South wall, 80% width × 2.5m tall, centered) ────────────────────────
+! X: {win_x0:.4f} to {win_x1:.4f} (80% of {side:.4f}m wall), Z: 0.25 to 2.75
 
   FenestrationSurface:Detailed,
     South_Window,            !- Name
@@ -531,10 +547,10 @@ def generate_reference_box_idf(
     ,                        !- Frame and Divider Name
     1,                       !- Multiplier
     4,                       !- Number of Vertices
-    1.0, 0.0, 2.75,
-    1.0, 0.0, 0.25,
-    9.0, 0.0, 0.25,
-    9.0, 0.0, 2.75;
+    {win_x0:.4f}, 0.0, 2.75,
+    {win_x0:.4f}, 0.0, 0.25,
+    {win_x1:.4f}, 0.0, 0.25,
+    {win_x1:.4f}, 0.0, 2.75;
 
 ! ── Window Shading Control (External Shutter) ────────────────────────────────────
 
@@ -581,39 +597,39 @@ def generate_reference_box_idf(
     ,                        !- Sensible Heat Fraction (autocalculate)
     ActivitySched;           !- Activity Level Schedule Name
 
-! Equipment: 1 W/m² × 100 m² = 100W during 0–16h (radiant fraction 0.20 per standard)
+! Equipment: 1 W/m² during 0–16h (radiant fraction 0.20 per standard)
   ElectricEquipment,
     Equip_Low,               !- Name
     RefZone,                 !- Zone Name
     EquipSched_Low,          !- Schedule Name
     EquipmentLevel,          !- Design Level Calculation Method
-    100.0,                   !- Design Level {{W}}
+    {equip_low_w:.2f},       !- Design Level {{W}} (1 W/m² × {floor_area_m2:.1f} m²)
     ,                        !- W/m2
     ,                        !- W/person
     0.20,                    !- Fraction Latent
     0.20,                    !- Fraction Radiant (per standard note (ב))
     0.0;                     !- Fraction Lost
 
-! Equipment: 9 W/m² × 100 m² = 900W during 16–24h
+! Equipment: 9 W/m² during 16–24h
   ElectricEquipment,
     Equip_High,              !- Name
     RefZone,                 !- Zone Name
     EquipSched_High,         !- Schedule Name
     EquipmentLevel,          !- Design Level Calculation Method
-    900.0,                   !- Design Level {{W}}
+    {equip_high_w:.2f},      !- Design Level {{W}} (9 W/m² × {floor_area_m2:.1f} m²)
     ,
     ,
     0.20,                    !- Fraction Latent
     0.20,                    !- Fraction Radiant
     0.0;                     !- Fraction Lost
 
-! Lighting: 200W, 17–24h (visible fraction 0.22, radiant fraction 0.28 per standard note (ג))
+! Lighting: 2 W/m², 17–24h (visible fraction 0.22, radiant fraction 0.28 per standard note (ג))
   Lights,
     RefZone_Lights,          !- Name
     RefZone,                 !- Zone Name
     LightSched,              !- Schedule Name
     LightingLevel,           !- Design Level Calculation Method
-    200.0,                   !- Lighting Level {{W}}
+    {lights_w:.2f},          !- Lighting Level {{W}} (2 W/m² × {floor_area_m2:.1f} m²)
     ,
     ,
     0.0,                     !- Fraction Return Air
