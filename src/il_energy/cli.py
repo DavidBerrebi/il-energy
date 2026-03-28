@@ -360,7 +360,7 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
         click.echo("Error: proposed building has zero conditioned area.", err=True)
         sys.exit(1)
 
-    # Compute EPdes from zone-level sensible HVAC (matches EP 9.x / EVERGREEN).
+    # Compute EPdes from zone-level sensible HVAC (sensible-only, per SI 5282).
     # EP 25.2 end_uses totals include latent dehumidification loads that EP 9.x
     # did not compute; zone sums use sensible rates (see sql_parser Strategy 2).
     flats_for_ep = proposed_metrics.zones  # ZoneEnergy list (sensible only)
@@ -391,8 +391,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
     ref_hvac_by_ft: dict = {}
 
     if zone_table and not simulate_epref:
-        # ── Tabulated EPref for Zone B (calibrated against EVERGREEN v3.0.4) ──
-        click.echo(f"3. Using tabulated EPref values for Zone {zone} (EVERGREEN-calibrated)...")
+        # ── Tabulated EPref for Zone B (per SI 5282 Part 1, 2024 amendment) ──
+        click.echo(f"3. Using tabulated EPref values for Zone {zone} (SI 5282 Part 1)...")
         threshold = zone_table.get("small_unit_threshold_m2", 50)
         for ft in ("ground", "middle", "top"):
             ft_data = zone_table.get(ft)
