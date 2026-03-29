@@ -1,10 +1,10 @@
-"""Professional SI 5282 residential report generator.
+"""Professional SI 5282 residential report generator — Evergreen-parity layout.
 
-Produces output files:
-  residential_report.md  — formatted Markdown report
-  residential_report.pdf — professional PDF (via weasyprint)
-  units.csv              — per-unit grades (EVERGREEN output.csv format)
-  windows.csv            — window/surface analysis
+Produces:
+  residential_report.html — intermediate HTML
+  residential_report.pdf  — professional PDF (via WeasyPrint or Chrome headless)
+  units.csv               — per-unit grades (Evergreen-compatible)
+  windows.csv             — window/surface analysis
 """
 
 from __future__ import annotations
@@ -19,12 +19,17 @@ from il_energy.analysis.windows import build_window_records, window_summary_by_f
 from il_energy.models import SimulationOutput
 
 
-# Grade ↔ numeric score mappings
+# ── Constants ──────────────────────────────────────────────────────────────────
+_ELECTRICITY_RATE_NIS = 0.62   # NIS/kWh — residential tariff approximation
+_COST_YEARS = 5                 # 5-year projection (per Evergreen convention)
+
+# Grade ↔ score
 _SCORE_TO_GRADE = {5: "A+", 4: "A", 3: "B", 2: "C", 1: "D", 0: "E", -1: "F"}
 _GRADE_TO_SCORE = {v: k for k, v in _SCORE_TO_GRADE.items()}
+_GRADE_ORDER = ["A+", "A", "B", "C", "D", "E", "F"]
 _GRADE_HE = {
     "A+": "יהלום", "A": "פלטינה", "B": "זהב",
-    "C": "כסף",  "D": "ארד",    "E": "דרגת בסיס", "F": "לא עומד",
+    "C": "כסף",   "D": "ארד",    "E": "דרגת בסיס", "F": "לא עומד",
 }
 _GRADE_EN = {
     "A+": "Diamond", "A": "Platinum", "B": "Gold",
@@ -37,25 +42,36 @@ _GRADE_COLOR = {
 
 
 def _building_grade(unit_ratings: List[Dict], climate_zone: str) -> Dict:
-    """Compute building-level grade from per-unit scores (area-weighted average).
-
-    Per SI 5282: if any unit is F the building is F (new buildings).
-    """
+    """Area-weighted building grade from per-unit scores."""
     if any(u["grade"]["score"] <= -1 for u in unit_ratings):
         g = "F"
         return {"grade": g, "name_en": _GRADE_EN[g], "name_he": _GRADE_HE[g],
                 "score": -1, "weighted_score": -1.0}
-
     total_area = sum(u["area_m2"] for u in unit_ratings)
     if total_area <= 0:
         return {"grade": "?", "name_en": "", "name_he": "", "score": 0, "weighted_score": 0.0}
-
     weighted_score = sum(u["grade"]["score"] * u["area_m2"] for u in unit_ratings) / total_area
-    rounded = round(weighted_score)
-    rounded = max(-1, min(5, rounded))
+    rounded = max(-1, min(5, round(weighted_score)))
     g = _SCORE_TO_GRADE.get(rounded, "F")
     return {"grade": g, "name_en": _GRADE_EN[g], "name_he": _GRADE_HE[g],
             "score": rounded, "weighted_score": round(weighted_score, 3)}
+
+
+def _five_year_costs(ep_ref_weighted: float, ep_des: float, cond_area: float) -> Dict:
+    """Compute 5-year electricity cost comparison in NIS.
+
+    ref_nis     = weighted EPref × area × 5 years × 0.62 NIS/kWh
+    savings_nis = (EPref - EPdes) × area × 5 × 0.62
+    """
+    ref_nis = ep_ref_weighted * cond_area * _COST_YEARS * _ELECTRICITY_RATE_NIS
+    proposed_nis = ep_des * cond_area * _COST_YEARS * _ELECTRICITY_RATE_NIS
+    savings_nis = ref_nis - proposed_nis
+    return {
+        "ref_nis": ref_nis,
+        "proposed_nis": proposed_nis,
+        "savings_nis": max(0.0, savings_nis),
+        "savings_pct": max(0.0, savings_nis / ref_nis * 100) if ref_nis > 0 else 0.0,
+    }
 
 
 def _flat_unit_number(flat_id: str) -> str:
@@ -69,193 +85,363 @@ def _flat_floor(flat_id: str) -> str:
 
 
 def write_units_csv(unit_ratings: List[Dict], output_path: Path) -> None:
-    """Write units.csv matching SI 5282 output format."""
+    """Write units.csv matching Evergreen _Results format."""
     columns = [
-        "Multiplier", "Grade", "Rating (G)", "Floor Area {m2}",
-        "Orientation", "Flat or Zone", "Floor",
+        "Multiplier", "Grade", "Rating (G)", "Savings%",
+        "EPdes Sum", "EPdes Cooling", "EPdes Heating", "EPdes Fan",
+        "EPref", "Floor Area {m2}", "Orientation", "Flat or Zone", "Floor",
     ]
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(columns)
         for u in unit_ratings:
             fid = u["flat_id"]
+            cop = u.get("cop", 3.0)
+            area = u["area_m2"]
+            cooling_m2 = u["cooling_kwh"] / cop / area if area > 0 else 0.0
+            heating_m2 = u["heating_kwh"] / cop / area if area > 0 else 0.0
             writer.writerow([
                 1,
                 u["grade"]["score"],
                 u["grade"]["grade"],
-                f"{u['area_m2']:.2f}",
-                "",
+                f"{u['ip_percent']:.1f}",
+                f"{u['ep_des_kwh_m2']:.2f}",
+                f"{cooling_m2:.2f}",
+                f"{heating_m2:.2f}",
+                "0.00",
+                f"{u['ep_ref_kwh_m2']:.2f}",
+                f"{area:.2f}",
+                u.get("orientation", ""),
                 _flat_unit_number(fid),
                 _flat_floor(fid),
             ])
 
 
-# ── HTML/PDF report ────────────────────────────────────────────────────────────
+# ── HTML / PDF ─────────────────────────────────────────────────────────────────
 
 _HTML_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 10pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 9.5pt;
     color: #1a1a2e;
     background: #fff;
-    line-height: 1.5;
+    line-height: 1.45;
 }
 
 .page {
     width: 210mm;
     min-height: 297mm;
-    padding: 18mm 18mm 20mm 18mm;
+    padding: 16mm 16mm 20mm 16mm;
+    position: relative;
 }
 
-/* Header */
-.header {
+/* ── Cover page ─────────────────────────────────────────── */
+
+.cover-top {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-    border-bottom: 3px solid #1a1a2e;
+    align-items: center;
+    border-bottom: 2px solid #1a1a2e;
     padding-bottom: 8pt;
-    margin-bottom: 16pt;
+    margin-bottom: 18pt;
 }
-.header-left h1 {
-    font-size: 15pt;
+.cover-brand {
+    font-size: 13pt;
     font-weight: 700;
     color: #1a1a2e;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.2px;
 }
-.header-left p {
-    font-size: 8.5pt;
+.cover-standard {
+    font-size: 9pt;
     color: #555;
-    margin-top: 2pt;
-}
-.header-right {
     text-align: right;
-    font-size: 8pt;
-    color: #555;
-    line-height: 1.7;
 }
 
-/* Grade banner */
-.grade-banner {
-    border-radius: 6px;
-    padding: 14pt 18pt;
-    margin-bottom: 16pt;
-    display: flex;
-    align-items: center;
-    gap: 18pt;
-    color: white;
+.cover-title {
+    text-align: center;
+    margin-bottom: 22pt;
 }
-.grade-letter {
-    font-size: 42pt;
+.cover-title h1 {
+    font-size: 19pt;
+    font-weight: 700;
+    color: #1a1a2e;
+    direction: rtl;
+    margin-bottom: 4pt;
+}
+.cover-title h2 {
+    font-size: 13pt;
+    font-weight: 400;
+    color: #444;
+}
+
+/* ── Grade arrow scale ─────────────────────────────────── */
+
+.grade-scale-wrap {
+    margin: 0 0 22pt 0;
+}
+.grade-scale-label {
+    font-size: 7.5pt;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5pt;
+}
+.grade-scale {
+    display: flex;
+    height: 58pt;
+    align-items: stretch;
+    gap: 0;
+}
+.grade-box {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    position: relative;
+    padding: 4pt 2pt;
+}
+/* First box: flat left, arrow right */
+.grade-box.pos-first {
+    clip-path: polygon(0% 0%, calc(100% - 13px) 0%, 100% 50%, calc(100% - 13px) 100%, 0% 100%);
+    border-radius: 3px 0 0 3px;
+}
+/* Middle boxes: notch left, arrow right */
+.grade-box.pos-mid {
+    clip-path: polygon(13px 0%, calc(100% - 13px) 0%, 100% 50%, calc(100% - 13px) 100%, 13px 100%, 0% 50%);
+    margin-left: -7px;
+}
+/* Last box: notch left, flat right */
+.grade-box.pos-last {
+    clip-path: polygon(13px 0%, 100% 0%, 100% 100%, 13px 100%, 0% 50%);
+    margin-left: -7px;
+    border-radius: 0 3px 3px 0;
+}
+.grade-box .box-letter {
+    font-size: 15pt;
     font-weight: 700;
     line-height: 1;
-    min-width: 56pt;
+}
+.grade-box .box-name {
+    font-size: 6.5pt;
+    opacity: 0.9;
+    margin-top: 2pt;
     text-align: center;
 }
-.grade-details h2 {
-    font-size: 14pt;
-    font-weight: 600;
-    margin-bottom: 3pt;
+/* Active grade: wrapped in outer div for border effect */
+.grade-box-outer {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    position: relative;
 }
-.grade-details p {
-    font-size: 9pt;
-    opacity: 0.9;
+.grade-box-active-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    position: relative;
+    z-index: 5;
+    transform: scaleY(1.18);
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.8));
 }
-.grade-ip {
-    margin-left: auto;
-    text-align: right;
+.grade-box-active-wrap.pos-first {
+    clip-path: polygon(0% 0%, calc(100% - 13px) 0%, 100% 50%, calc(100% - 13px) 100%, 0% 100%);
+    border-radius: 3px 0 0 3px;
 }
-.grade-ip .ip-value {
-    font-size: 22pt;
+.grade-box-active-wrap.pos-mid {
+    clip-path: polygon(13px 0%, calc(100% - 13px) 0%, 100% 50%, calc(100% - 13px) 100%, 13px 100%, 0% 50%);
+    margin-left: -7px;
+}
+.grade-box-active-wrap.pos-last {
+    clip-path: polygon(13px 0%, 100% 0%, 100% 100%, 13px 100%, 0% 50%);
+    margin-left: -7px;
+}
+.active-letter {
+    font-size: 17pt;
     font-weight: 700;
     line-height: 1;
 }
-.grade-ip .ip-label {
-    font-size: 7.5pt;
-    opacity: 0.85;
+.active-name {
+    font-size: 7pt;
+    font-weight: 600;
     margin-top: 2pt;
 }
 
-/* Section headings */
-h3 {
+/* ── Project info table ────────────────────────────────── */
+
+.project-info {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20pt;
+    font-size: 9pt;
+}
+.project-info td {
+    padding: 5pt 8pt;
+    border: 1px solid #ddd;
+}
+.project-info td.label {
+    background: #f0f2f5;
+    font-weight: 600;
+    color: #444;
+    width: 18%;
+}
+.project-info td.value {
+    color: #1a1a2e;
+    font-weight: 500;
+    width: 32%;
+}
+
+/* ── 5-year cost bars ─────────────────────────────────── */
+
+.cost-section h3 {
     font-size: 9pt;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.5px;
     color: #1a1a2e;
     border-bottom: 1.5px solid #e0e0e0;
     padding-bottom: 4pt;
-    margin: 14pt 0 8pt 0;
+    margin-bottom: 10pt;
 }
-
-/* Two-column layout */
-.two-col {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14pt;
-    margin-bottom: 4pt;
+.cost-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10pt;
+    margin-bottom: 7pt;
 }
-
-/* Summary cards */
-.summary-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8pt;
-    margin-bottom: 4pt;
-}
-.card {
-    background: #f7f8fa;
-    border-radius: 5px;
-    padding: 8pt 10pt;
-    border-left: 3px solid #1a1a2e;
-}
-.card .card-label {
-    font-size: 7pt;
-    color: #777;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-}
-.card .card-value {
-    font-size: 11.5pt;
-    font-weight: 600;
-    color: #1a1a2e;
-    margin-top: 1pt;
-}
-.card .card-unit {
-    font-size: 7.5pt;
+.cost-bar-label {
+    width: 42pt;
+    font-size: 8pt;
     color: #555;
-    margin-top: 1pt;
+    text-align: right;
+    flex-shrink: 0;
+}
+.cost-bar-track {
+    flex: 1;
+    background: #f0f2f5;
+    border-radius: 3pt;
+    height: 22pt;
+    position: relative;
+    overflow: hidden;
+}
+.cost-bar-fill {
+    height: 100%;
+    border-radius: 3pt;
+    display: flex;
+    align-items: center;
+    padding: 0 8pt;
+    color: white;
+    font-size: 9pt;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.bar-ref   { background: #c0392b; }
+.bar-save  { background: #27ae60; }
+.cost-note {
+    font-size: 7.5pt;
+    color: #777;
+    margin-top: 4pt;
+    font-style: italic;
 }
 
-/* Tables */
+/* ── Results page header ───────────────────────────────── */
+
+.results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid #1a1a2e;
+    padding-bottom: 6pt;
+    margin-bottom: 10pt;
+}
+.results-header h1 {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #1a1a2e;
+}
+.results-header .meta {
+    font-size: 7.5pt;
+    color: #666;
+    text-align: right;
+    line-height: 1.7;
+}
+
+.summary-bar {
+    background: #ffd600;
+    border-radius: 4pt;
+    padding: 7pt 12pt;
+    display: flex;
+    align-items: center;
+    gap: 20pt;
+    margin-bottom: 10pt;
+}
+.summary-bar .sb-item {
+    font-size: 9pt;
+    color: #1a1a2e;
+}
+.summary-bar .sb-item strong {
+    font-size: 11pt;
+}
+.summary-bar .sb-grade {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8pt;
+}
+.summary-bar .sb-grade-badge {
+    width: 34pt;
+    height: 34pt;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 14pt;
+    font-weight: 700;
+}
+
+/* ── Section headings ─────────────────────────────────── */
+
+h3 {
+    font-size: 8.5pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #1a1a2e;
+    border-bottom: 1.5px solid #e0e0e0;
+    padding-bottom: 3pt;
+    margin: 12pt 0 7pt 0;
+}
+
+/* ── Tables ───────────────────────────────────────────── */
+
 table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 8pt;
+    font-size: 7.8pt;
     margin-bottom: 8pt;
 }
-thead tr {
-    background: #1a1a2e;
-    color: white;
-}
+thead tr { background: #1a1a2e; color: white; }
 thead th {
-    padding: 5pt 7pt;
+    padding: 4pt 5pt;
     text-align: left;
     font-weight: 500;
-    letter-spacing: 0.2px;
+    font-size: 7.5pt;
 }
 tbody tr:nth-child(even) { background: #f7f8fa; }
-tbody tr:hover { background: #eef0f5; }
 tbody td {
-    padding: 4pt 7pt;
+    padding: 3.5pt 5pt;
     border-bottom: 1px solid #e8eaed;
     color: #2c2c3e;
 }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
-.center { text-align: center; }
+.ctr { text-align: center; }
 
 /* Grade pill */
 .grade-pill {
@@ -263,55 +449,46 @@ tbody td {
     border-radius: 3px;
     padding: 1pt 5pt;
     font-size: 7.5pt;
-    font-weight: 600;
+    font-weight: 700;
     color: white;
-    min-width: 22pt;
+    min-width: 20pt;
     text-align: center;
 }
 
 /* EPref table */
-.epref-table { margin-bottom: 0; }
 .epref-source {
-    font-size: 7.5pt;
+    font-size: 7pt;
     color: #777;
-    margin-top: 4pt;
+    margin-top: 3pt;
     font-style: italic;
 }
 
 /* Grade distribution bar */
 .dist-bar {
     display: flex;
-    gap: 6pt;
+    gap: 8pt;
     flex-wrap: wrap;
-    margin-bottom: 6pt;
-}
-.dist-item {
-    display: flex;
-    align-items: center;
-    gap: 4pt;
+    margin-bottom: 8pt;
     font-size: 8pt;
 }
-.dist-swatch {
-    width: 10pt;
-    height: 10pt;
-    border-radius: 2px;
-}
+.dist-item { display: flex; align-items: center; gap: 4pt; }
+.dist-swatch { width: 10pt; height: 10pt; border-radius: 2px; }
 
-/* Footer */
+/* ── Footer ───────────────────────────────────────────── */
+
 .footer {
     position: fixed;
-    bottom: 12mm;
-    left: 18mm;
-    right: 18mm;
+    bottom: 10mm;
+    left: 16mm;
+    right: 16mm;
     display: flex;
     justify-content: space-between;
-    font-size: 7pt;
-    color: #aaa;
+    font-size: 6.5pt;
+    color: #bbb;
     border-top: 1px solid #e0e0e0;
-    padding-top: 5pt;
+    padding-top: 4pt;
 }
 
-/* Page break */
 .page-break { page-break-before: always; }
 """
 
@@ -323,13 +500,14 @@ def _render_pdf(html_str: str, html_path: "Path", pdf_path: "Path") -> "Optional
     # Try WeasyPrint first
     try:
         from weasyprint import HTML as WP_HTML
-        WP_HTML(string=html_str).write_pdf(str(pdf_path))
+        WP_HTML(string=html_str, base_url=str(html_path.parent)).write_pdf(str(pdf_path))
         return pdf_path
     except Exception:
         pass
 
     # Try Google Chrome headless (macOS or Linux)
-    import subprocess, shutil
+    import subprocess
+    import shutil
     chrome_candidates = [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "google-chrome",
@@ -364,7 +542,7 @@ def _render_pdf(html_str: str, html_path: "Path", pdf_path: "Path") -> "Optional
 
     warnings.warn(
         "PDF generation skipped: neither WeasyPrint nor Chrome headless is available. "
-        "The HTML report is at: " + str(html_path)
+        "HTML report at: " + str(html_path)
     )
     return None
 
@@ -372,6 +550,36 @@ def _render_pdf(html_str: str, html_path: "Path", pdf_path: "Path") -> "Optional
 def _grade_pill_html(grade: str) -> str:
     color = _GRADE_COLOR.get(grade, "#666")
     return f'<span class="grade-pill" style="background:{color}">{grade}</span>'
+
+
+def _grade_scale_html(active_grade: str) -> str:
+    """Build the horizontal grade arrow scale HTML."""
+    boxes = []
+    n = len(_GRADE_ORDER)
+    for i, g in enumerate(_GRADE_ORDER):
+        color = _GRADE_COLOR.get(g, "#666")
+        he = _GRADE_HE.get(g, "")
+        pos_cls = "pos-first" if i == 0 else ("pos-last" if i == n - 1 else "pos-mid")
+        if g == active_grade:
+            boxes.append(
+                f'<div class="grade-box-active-wrap {pos_cls}" style="background:{color}">'
+                f'<div class="active-letter">{g}</div>'
+                f'<div class="active-name">{he}</div>'
+                f'</div>'
+            )
+        else:
+            boxes.append(
+                f'<div class="grade-box {pos_cls}" style="background:{color}">'
+                f'<div class="box-letter">{g}</div>'
+                f'<div class="box-name">{he}</div>'
+                f'</div>'
+            )
+    return (
+        '<div class="grade-scale-wrap">'
+        '<div class="grade-scale-label">אנרגיה · Energy Rating Scale</div>'
+        '<div class="grade-scale">' + "".join(boxes) + '</div>'
+        '</div>'
+    )
 
 
 def _build_html(
@@ -384,6 +592,7 @@ def _build_html(
     ip_pct: float,
     ep_des: float,
     ep_ref: float,
+    ep_ref_weighted: float,
     cop: float,
     cond_area: float,
     unit_ratings: List[Dict],
@@ -397,76 +606,97 @@ def _build_html(
     win_summary: Dict,
     total_windows: int,
     total_glass_area: float,
+    costs: Dict,
 ) -> str:
-    color = _GRADE_COLOR.get(grade_letter, "#444")
+    grade_color = _GRADE_COLOR.get(grade_letter, "#444")
+    grade_scale = _grade_scale_html(grade_letter)
 
-    # ── Grade banner ──
-    banner = f"""
-    <div class="grade-banner" style="background:{color}">
-        <div class="grade-letter">{grade_letter}</div>
-        <div class="grade-details">
-            <h2>{grade_en} / {grade_he}</h2>
-            <p>ת"י 5282 חלק 1 (2024) &nbsp;|&nbsp; Climate Zone {climate_zone}</p>
-            <p>Weighted score: {building_grade_info['weighted_score']:.2f}</p>
+    # ── Cover page ──────────────────────────────────────────────────────────────
+    n_units = len(unit_ratings)
+    total_unit_area = sum(u["area_m2"] for u in unit_ratings)
+
+    # Project info rows (2 columns × 3 rows)
+    project_info = f"""
+    <table class="project-info">
+      <tr>
+        <td class="label">Project</td>
+        <td class="value">{project_name}</td>
+        <td class="label">Date</td>
+        <td class="value">{today}</td>
+      </tr>
+      <tr>
+        <td class="label">Standard</td>
+        <td class="value">ת"י 5282 חלק 1 (2024)</td>
+        <td class="label">Climate Zone</td>
+        <td class="value">{climate_zone}</td>
+      </tr>
+      <tr>
+        <td class="label">Total Units</td>
+        <td class="value">{n_units}</td>
+        <td class="label">Cond. Area</td>
+        <td class="value">{cond_area:,.0f} m²</td>
+      </tr>
+      <tr>
+        <td class="label">EPdes</td>
+        <td class="value">{ep_des:.2f} kWh/m²/yr</td>
+        <td class="label">EPref</td>
+        <td class="value">{ep_ref_weighted:.2f} kWh/m²/yr (weighted)</td>
+      </tr>
+      <tr>
+        <td class="label">IP</td>
+        <td class="value"><strong>{ip_pct:+.1f}%</strong></td>
+        <td class="label">Engine</td>
+        <td class="value">EnergyPlus 25.2</td>
+      </tr>
+    </table>"""
+
+    # 5-year cost bars
+    ref_nis = costs["ref_nis"]
+    sav_nis = costs["savings_nis"]
+    sav_pct = costs["savings_pct"]
+    bar_savings_width = min(100.0, sav_pct)  # savings bar relative to reference
+    cost_bars = f"""
+    <div class="cost-section">
+      <h3>5-Year Electricity Cost Comparison (estimated)</h3>
+      <div class="cost-bar-row">
+        <div class="cost-bar-label">Reference</div>
+        <div class="cost-bar-track">
+          <div class="cost-bar-fill bar-ref" style="width:100%">
+            {ref_nis:,.0f} ₪
+          </div>
         </div>
-        <div class="grade-ip">
-            <div class="ip-value">{ip_pct:+.1f}%</div>
-            <div class="ip-label">Improvement<br>Percentage (IP)</div>
+      </div>
+      <div class="cost-bar-row">
+        <div class="cost-bar-label">Savings</div>
+        <div class="cost-bar-track">
+          <div class="cost-bar-fill bar-save" style="width:{bar_savings_width:.1f}%">
+            {sav_nis:,.0f} ₪&nbsp;({sav_pct:.1f}%)
+          </div>
         </div>
+      </div>
+      <p class="cost-note">
+        Estimate: EPref × area × {_COST_YEARS} yr × {_ELECTRICITY_RATE_NIS} NIS/kWh.
+        Weighted EPref = {ep_ref_weighted:.2f} kWh/m²/yr.
+      </p>
     </div>"""
 
-    # ── Summary cards ──
-    hvac_kwh = output.end_uses.cooling_kwh + output.end_uses.heating_kwh
-    cards = f"""
-    <div class="summary-grid">
-        <div class="card">
-            <div class="card-label">EPdes (Proposed)</div>
-            <div class="card-value">{ep_des:.2f}</div>
-            <div class="card-unit">kWh/m²/yr</div>
+    # ── Results page: summary bar ───────────────────────────────────────────────
+    weighted_score = building_grade_info["weighted_score"]
+    summary_bar = f"""
+    <div class="summary-bar">
+      <div class="sb-item"><strong>{n_units}</strong> units</div>
+      <div class="sb-item">Weighted score: <strong>{weighted_score:.2f}</strong></div>
+      <div class="sb-item">Score: <strong>{building_grade_info['score']}</strong></div>
+      <div class="sb-item">IP: <strong>{ip_pct:+.1f}%</strong></div>
+      <div class="sb-grade">
+        <div class="sb-grade-badge" style="background:{grade_color}">{grade_letter}</div>
+        <div style="font-size:9pt;color:#1a1a2e;">
+          <strong>{grade_en}</strong><br>{grade_he}
         </div>
-        <div class="card">
-            <div class="card-label">EPref (Reference)</div>
-            <div class="card-value">{ep_ref:.2f}</div>
-            <div class="card-unit">kWh/m²/yr</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Conditioned Area</div>
-            <div class="card-value">{cond_area:,.0f}</div>
-            <div class="card-unit">m²</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Annual Cooling</div>
-            <div class="card-value">{output.end_uses.cooling_kwh:,.0f}</div>
-            <div class="card-unit">kWh</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Annual Heating</div>
-            <div class="card-value">{output.end_uses.heating_kwh:,.0f}</div>
-            <div class="card-unit">kWh</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Total Units</div>
-            <div class="card-value">{len(unit_ratings)}</div>
-            <div class="card-unit">apartments</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Total Site Energy</div>
-            <div class="card-value">{output.site_energy_kwh:,.0f}</div>
-            <div class="card-unit">kWh/yr</div>
-        </div>
-        <div class="card">
-            <div class="card-label">EUI (Site)</div>
-            <div class="card-value">{output.site_energy_kwh / cond_area:.1f}</div>
-            <div class="card-unit">kWh/m²/yr</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Total Glazing</div>
-            <div class="card-value">{total_glass_area:.1f}</div>
-            <div class="card-unit">m² ({total_windows} windows)</div>
-        </div>
+      </div>
     </div>"""
 
-    # ── EPref section ──
+    # ── EPref section ───────────────────────────────────────────────────────────
     if tabulated_epref:
         epref_rows = "".join(
             f"<tr><td>{ft.capitalize()}</td><td class='num'>{ep_ref_by_floor_type[ft]:.2f}</td></tr>"
@@ -474,12 +704,12 @@ def _build_html(
         )
         epref_section = f"""
         <h3>Reference EPref — SI 5282 Part 1, Annex ג (Zone {climate_zone})</h3>
-        <table class="epref-table">
+        <table>
             <thead><tr><th>Floor Type</th><th>EPref [kWh/m²/yr]</th></tr></thead>
             <tbody>{epref_rows}</tbody>
         </table>
-        <p class="epref-source">Values per SI 5282 Part 1 (2024 amendment), Zone {climate_zone}.
-        COP = {cop}. Small units ≤ 50 m² use higher EPref per standard.</p>"""
+        <p class="epref-source">Tabulated per SI 5282 Part 1 (2024). COP = {cop}.
+        Units ≤ 50 m² use higher EPref per standard.</p>"""
     else:
         epref_rows = ""
         for ft_key, hvac_map in sorted(ref_hvac_by_ft.items()):
@@ -493,8 +723,8 @@ def _build_html(
             )
         epref_section = f"""
         <h3>Reference Box Simulation — SI 5282 Part 1, Annex ג</h3>
-        <p class="epref-source" style="margin-bottom:6pt">Reference unit: {int(box_area)} m² (10×10×3 m),
-        4 cardinal orientations. COP = {cop}.</p>
+        <p class="epref-source" style="margin-bottom:5pt">Unit: {int(box_area)} m²
+        (10×10×3 m), 4 orientations. COP = {cop}.</p>
         <table>
             <thead><tr>
                 <th>Floor Type</th><th>S (kWh)</th><th>W (kWh)</th>
@@ -504,7 +734,7 @@ def _build_html(
             <tbody>{epref_rows}</tbody>
         </table>"""
 
-    # ── Grade distribution ──
+    # ── Grade distribution ──────────────────────────────────────────────────────
     dist_items = "".join(
         f'<div class="dist-item">'
         f'<div class="dist-swatch" style="background:{_GRADE_COLOR.get(g,"#666")}"></div>'
@@ -513,25 +743,36 @@ def _build_html(
         for g, n in sorted(grade_dist.items(), key=lambda x: -_GRADE_TO_SCORE.get(x[0], -1))
     )
 
-    # ── Per-unit table ──
+    # ── Per-unit table (Evergreen _Results columns) ─────────────────────────────
     unit_rows = ""
     for u in unit_ratings:
         g = u["grade"]["grade"]
         pill = _grade_pill_html(g)
+        cop_u = u.get("cop", cop)
+        area = u["area_m2"]
+        cooling_m2 = u["cooling_kwh"] / cop_u / area if area > 0 else 0.0
+        heating_m2 = u["heating_kwh"] / cop_u / area if area > 0 else 0.0
+        fan_m2 = 0.0
+        ip = u["ip_percent"]
+        orient = u.get("orientation", "")
         unit_rows += (
             f"<tr>"
-            f"<td>{u['flat_id']}</td>"
-            f"<td class='center'>{u['floor_number']}</td>"
-            f"<td class='center'>{u['floor_type']}</td>"
-            f"<td class='num'>{u['area_m2']:.1f}</td>"
+            f"<td>{_flat_floor(u['flat_id'])}</td>"
+            f"<td class='ctr'>{_flat_unit_number(u['flat_id'])}</td>"
+            f"<td class='ctr'>{u['floor_type'][:3].capitalize()}</td>"
+            f"<td class='num'>{area:.1f}</td>"
             f"<td class='num'>{u['ep_des_kwh_m2']:.2f}</td>"
+            f"<td class='num'>{cooling_m2:.2f}</td>"
+            f"<td class='num'>{heating_m2:.2f}</td>"
+            f"<td class='num'>{fan_m2:.2f}</td>"
             f"<td class='num'>{u['ep_ref_kwh_m2']:.2f}</td>"
-            f"<td class='num'>{u['ip_percent']:+.1f}%</td>"
-            f"<td class='center'>{pill}</td>"
+            f"<td class='num'>{ip:+.1f}%</td>"
+            f"<td class='ctr'>{orient}</td>"
+            f"<td class='ctr'>{pill}</td>"
             f"</tr>"
         )
 
-    # ── Window analysis table ──
+    # ── Window summary ──────────────────────────────────────────────────────────
     win_rows = ""
     for fid, s in sorted(win_summary.items()):
         orients = ", ".join(
@@ -549,97 +790,145 @@ def _build_html(
             f"</tr>"
         )
 
+    # ── Assemble HTML ───────────────────────────────────────────────────────────
     html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="he-IL">
 <head>
 <meta charset="UTF-8">
 <style>{_HTML_CSS}</style>
 </head>
 <body>
+
+<!-- ═══════════════════════════════════════════ PAGE 1: COVER ══ -->
 <div class="page">
 
-  <!-- Header -->
-  <div class="header">
-    <div class="header-left">
-      <h1>Energy Rating Report &nbsp;—&nbsp; ת"י 5282 חלק 1</h1>
-      <p><strong>{project_name}</strong></p>
-    </div>
-    <div class="header-right">
-      <div><strong>Date:</strong> {today}</div>
-      <div><strong>Standard:</strong> SI 5282 Part 1 (2024)</div>
-      <div><strong>Climate Zone:</strong> {climate_zone}</div>
-      <div><strong>Engine:</strong> EnergyPlus 25.2</div>
+  <div class="cover-top">
+    <div class="cover-brand">il&#8209;energy</div>
+    <div class="cover-standard">
+      ת"י 5282 חלק 1 (2024)<br>SI 5282 Part 1 — Residential Energy Rating
     </div>
   </div>
 
-  <!-- Grade banner -->
-  {banner}
-
-  <!-- Summary cards -->
-  <h3>Building Summary</h3>
-  {cards}
-
-  <!-- EPref -->
-  {epref_section}
-
-  <!-- Grade distribution -->
-  <h3>Grade Distribution</h3>
-  <div class="dist-bar">{dist_items}</div>
-
-  <!-- Per-unit table -->
-  <h3>Per-Unit Results ({len(unit_ratings)} Apartments)</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Unit</th><th>Floor</th><th>Type</th>
-        <th>Area (m²)</th><th>EPdes</th><th>EPref</th><th>IP%</th><th>Grade</th>
-      </tr>
-    </thead>
-    <tbody>{unit_rows}</tbody>
-  </table>
-
-  <!-- Window analysis -->
-  <div class="page-break"></div>
-  <div class="header">
-    <div class="header-left">
-      <h1>Energy Rating Report &nbsp;—&nbsp; ת"י 5282 חלק 1</h1>
-      <p><strong>{project_name}</strong></p>
-    </div>
-    <div class="header-right">
-      <div><strong>Date:</strong> {today}</div>
-      <div><strong>Climate Zone:</strong> {climate_zone}</div>
-    </div>
+  <div class="cover-title">
+    <h1>דוח דירוג אנרגטי</h1>
+    <h2>Energy Rating Certificate</h2>
   </div>
-  <h3>Window Analysis Summary</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Unit</th><th>Count</th><th>Glass Area (m²)</th>
-        <th>Avg U (W/m²K)</th><th>Avg SHGC</th><th>WWR</th><th>Orientations</th>
-      </tr>
-    </thead>
-    <tbody>{win_rows}</tbody>
-  </table>
 
-  <!-- Notes -->
-  <h3>Methodology Notes</h3>
-  <table>
-    <tbody>
-      <tr><td><strong>EPdes</strong></td><td>Σ(zone sensible cooling + heating) / COP({cop}) / conditioned area [kWh/m²/yr electrical]</td></tr>
-      <tr><td><strong>EPref</strong></td><td>SI 5282 Part 1 Annex ג reference values per floor type and unit area</td></tr>
-      <tr><td><strong>IP</strong></td><td>(EPref − EPdes) / EPref × 100 %</td></tr>
-      <tr><td><strong>Floor type</strong></td><td>Ground = lowest floor, Top = highest floor or exposed-roof ratio ≥ 50%, Middle = all others</td></tr>
-      <tr><td><strong>Building grade</strong></td><td>Area-weighted average of unit scores, rounded to nearest integer</td></tr>
-    </tbody>
-  </table>
+  {grade_scale}
 
-  <!-- Footer -->
+  {project_info}
+
+  {cost_bars}
+
   <div class="footer">
     <span>il-energy — SI 5282 Compliance Engine</span>
     <span>{project_name} &nbsp;|&nbsp; {today}</span>
   </div>
 
 </div>
+
+<!-- ═══════════════════════════════════════════ PAGE 2: RESULTS ══ -->
+<div class="page-break"></div>
+<div class="page">
+
+  <div class="results-header">
+    <div>
+      <h1>Per-Unit Results — ת"י 5282 חלק 1</h1>
+    </div>
+    <div class="meta">
+      <div><strong>Project:</strong> {project_name}</div>
+      <div><strong>Date:</strong> {today}</div>
+      <div><strong>Zone:</strong> {climate_zone} &nbsp;|&nbsp; <strong>COP:</strong> {cop}</div>
+    </div>
+  </div>
+
+  {summary_bar}
+
+  {epref_section}
+
+  <h3>Grade Distribution</h3>
+  <div class="dist-bar">{dist_items}</div>
+
+  <h3>Per-Unit Energy Results ({n_units} Apartments)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Floor</th>
+        <th>Flat</th>
+        <th>Type</th>
+        <th>Area m²</th>
+        <th>EPdes Sum</th>
+        <th>Cooling</th>
+        <th>Heating</th>
+        <th>Fan</th>
+        <th>EPref</th>
+        <th>Savings%</th>
+        <th>Orient</th>
+        <th>Grade</th>
+      </tr>
+    </thead>
+    <tbody>{unit_rows}</tbody>
+  </table>
+  <p class="epref-source">All EPdes values in kWh/m²/yr electrical (sensible HVAC ÷ COP {cop}).
+  Fan = 0 (no central fan system). EPref per SI 5282 Part 1 Annex ג, Zone {climate_zone}.</p>
+
+  <div class="footer">
+    <span>il-energy — SI 5282 Compliance Engine</span>
+    <span>{project_name} &nbsp;|&nbsp; {today}</span>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 3: WINDOWS ══ -->
+<div class="page-break"></div>
+<div class="page">
+
+  <div class="results-header">
+    <div>
+      <h1>Window Analysis — ת"י 5282 חלק 1</h1>
+    </div>
+    <div class="meta">
+      <div><strong>Project:</strong> {project_name}</div>
+      <div><strong>Date:</strong> {today}</div>
+      <div>Total: {total_windows} windows, {total_glass_area:.1f} m² glass</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Unit</th><th>Count</th><th>Glass Area m²</th>
+        <th>Avg U W/m²K</th><th>Avg SHGC</th><th>WWR</th><th>Orientations</th>
+      </tr>
+    </thead>
+    <tbody>{win_rows}</tbody>
+  </table>
+
+  <h3>Methodology</h3>
+  <table>
+    <tbody>
+      <tr><td><strong>EPdes</strong></td>
+          <td>Σ(zone sensible cooling + heating) ÷ COP({cop}) ÷ unit area [kWh/m²/yr electrical]</td></tr>
+      <tr><td><strong>EPref</strong></td>
+          <td>{'SI 5282 Part 1 Annex ג — reference box simulation (100 m², 4 orientations) per floor type (Zone ' + climate_zone + ')' if not tabulated_epref else 'SI 5282 Part 1 Annex ג tabulated values by floor type and unit area (Zone ' + climate_zone + ')'}</td></tr>
+      <tr><td><strong>IP</strong></td>
+          <td>(EPref − EPdes) ÷ EPref × 100 %</td></tr>
+      <tr><td><strong>Floor type</strong></td>
+          <td>Ground = lowest floor · Top = exposed-roof ratio ≥ 50% or highest floor · Middle = all others</td></tr>
+      <tr><td><strong>Building grade</strong></td>
+          <td>Area-weighted average of unit scores, rounded to nearest integer</td></tr>
+      <tr><td><strong>5-year cost</strong></td>
+          <td>EPref × area × 5 yr × {_ELECTRICITY_RATE_NIS} NIS/kWh (reference) vs EPdes (proposed)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <span>il-energy — SI 5282 Compliance Engine</span>
+    <span>{project_name} &nbsp;|&nbsp; {today}</span>
+  </div>
+
+</div>
+
 </body>
 </html>"""
     return html
@@ -662,7 +951,7 @@ def generate_residential_report(
         shading_ctrl_names: Window names that have shading controls.
 
     Returns:
-        Dict mapping "report_md", "report_pdf", "units_csv", "windows_csv" to output paths.
+        Dict mapping "report_md", "report_pdf", "units_csv", "windows_csv" to paths.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -686,6 +975,15 @@ def generate_residential_report(
 
     today = date.today().strftime("%d %B %Y")
 
+    # Area-weighted EPref (used for 5-year cost computation)
+    total_unit_area = sum(u["area_m2"] for u in unit_ratings)
+    if unit_ratings and total_unit_area > 0:
+        ep_ref_weighted = sum(u["ep_ref_kwh_m2"] * u["area_m2"] for u in unit_ratings) / total_unit_area
+    else:
+        ep_ref_weighted = ep_ref
+
+    costs = _five_year_costs(ep_ref_weighted, ep_des, cond_area)
+
     window_records = build_window_records(output, shading_ctrl_names)
     win_summary = window_summary_by_flat(window_records)
     total_windows = sum(s["window_count"] for s in win_summary.values())
@@ -696,30 +994,32 @@ def generate_residential_report(
         g = u["grade"]["grade"]
         grade_dist[g] = grade_dist.get(g, 0) + 1
 
-    # ── Markdown report ───────────────────────────────────────────────────────
+    # ── Markdown report ───────────────────────────────────────────────────────────
     lines: List[str] = [
         "# SI 5282 Energy Rating Report",
         f"## {project_name or 'Building Energy Rating'}",
         "",
-        f"**Date:** {today}  |  **Standard:** SI 5282 Part 1 (2024)  |  **Climate Zone:** {climate_zone}  |  **Engine:** EnergyPlus 25.2",
+        f"**Date:** {today}  |  **Standard:** SI 5282 Part 1 (2024)  |  **Zone:** {climate_zone}  |  **Engine:** EnergyPlus 25.2",
         "",
         "---",
         "",
         f"## Grade {grade_letter} — {grade_en} / {grade_he}",
         "",
-        f"| Metric | Value |",
-        f"|--------|-------|",
+        "| Metric | Value |",
+        "|--------|-------|",
         f"| IP (Improvement Percentage) | **{ip_pct:+.1f}%** |",
         f"| EPdes (proposed) | {ep_des:.2f} kWh/m²/yr |",
-        f"| EPref (reference) | {ep_ref:.2f} kWh/m²/yr |",
+        f"| EPref weighted | {ep_ref_weighted:.2f} kWh/m²/yr |",
         f"| Weighted building score | {building_grade_info['weighted_score']:.2f} → Grade {grade_letter} |",
+        f"| 5-year reference cost | {costs['ref_nis']:,.0f} ₪ |",
+        f"| 5-year savings | {costs['savings_nis']:,.0f} ₪ ({costs['savings_pct']:.1f}%) |",
         "",
         "---",
         "",
         "## Building Summary",
         "",
-        f"| Metric | Value |",
-        f"|--------|-------|",
+        "| Metric | Value |",
+        "|--------|-------|",
         f"| Conditioned area | {cond_area:.1f} m² |",
         f"| Total units | {len(unit_ratings)} |",
         f"| Annual cooling | {output.end_uses.cooling_kwh:,.0f} kWh |",
@@ -737,19 +1037,19 @@ def generate_residential_report(
 
     if tabulated_epref:
         lines += [
-            f"| Floor Type | EPref [kWh/m²/yr] |",
-            f"|------------|------------------|",
+            "| Floor Type | EPref [kWh/m²/yr] |",
+            "|------------|------------------|",
         ]
         for ft in ("ground", "middle", "top"):
             if ft in ep_ref_by_floor_type:
                 lines.append(f"| {ft.capitalize()} | {ep_ref_by_floor_type[ft]:.2f} |")
-        lines += ["", f"_Per SI 5282 Part 1 (2024 amendment), Zone {climate_zone}. COP = {cop}._"]
+        lines += ["", f"_Tabulated per SI 5282 Part 1 (2024), Zone {climate_zone}. COP = {cop}._"]
     else:
         lines += [
-            f"Reference unit: {int(box_area)} m² (10×10×3 m), simulated in 4 cardinal orientations.",
+            f"Reference unit: {int(box_area)} m² (10×10×3 m), 4 cardinal orientations.",
             "",
-            f"| Floor type | S (kWh) | W (kWh) | N (kWh) | E (kWh) | EPref [kWh/m²/yr] |",
-            f"|------------|---------|---------|---------|---------|------------------|",
+            "| Floor type | S (kWh) | W (kWh) | N (kWh) | E (kWh) | EPref [kWh/m²/yr] |",
+            "|------------|---------|---------|---------|---------|------------------|",
         ]
         for ft_key, hvac_map in sorted(ref_hvac_by_ft.items()):
             vals = [hvac_map.get(o, 0.0) for o in ("S", "W", "N", "E")]
@@ -770,15 +1070,20 @@ def generate_residential_report(
             for g, n in sorted(grade_dist.items(), key=lambda x: -_GRADE_TO_SCORE.get(x[0], -1))
         ),
         "",
-        f"| Unit | Floor | Type | Area (m²) | EPdes | EPref | IP% | Grade |",
-        f"|------|-------|------|-----------|-------|-------|-----|-------|",
+        "| Floor | Flat | Type | Area m² | EPdes | Cooling | Heating | Fan | EPref | Savings% | Grade |",
+        "|-------|------|------|---------|-------|---------|---------|-----|-------|----------|-------|",
     ]
     for u in unit_ratings:
+        cop_u = u.get("cop", cop)
+        area = u["area_m2"]
+        c_m2 = u["cooling_kwh"] / cop_u / area if area > 0 else 0.0
+        h_m2 = u["heating_kwh"] / cop_u / area if area > 0 else 0.0
         g = u["grade"]["grade"]
         lines.append(
-            f"| {u['flat_id']} | {u['floor_number']} | {u['floor_type']} | {u['area_m2']:.1f} "
-            f"| {u['ep_des_kwh_m2']:.2f} | {u['ep_ref_kwh_m2']:.2f} "
-            f"| {u['ip_percent']:+.1f}% | **{g}** {_GRADE_HE.get(g, '')} |"
+            f"| {_flat_floor(u['flat_id'])} | {_flat_unit_number(u['flat_id'])} "
+            f"| {u['floor_type'][:3]} | {area:.1f} "
+            f"| {u['ep_des_kwh_m2']:.2f} | {c_m2:.2f} | {h_m2:.2f} | 0.00 "
+            f"| {u['ep_ref_kwh_m2']:.2f} | {u['ip_percent']:+.1f}% | **{g}** {_GRADE_HE.get(g, '')} |"
         )
 
     lines += [
@@ -787,8 +1092,8 @@ def generate_residential_report(
         "",
         "## Window Analysis Summary",
         "",
-        f"| Unit | Windows | Glass Area (m²) | Avg U (W/m²K) | Avg SHGC | WWR | Orientations |",
-        f"|------|---------|-----------------|---------------|----------|-----|--------------|",
+        "| Unit | Windows | Glass Area m² | Avg U W/m²K | Avg SHGC | WWR | Orientations |",
+        "|------|---------|---------------|-------------|----------|-----|--------------|",
     ]
     for fid, s in sorted(win_summary.items()):
         orients = " / ".join(
@@ -805,19 +1110,20 @@ def generate_residential_report(
         "",
         "## Methodology",
         "",
-        "- **EPdes** = Σ(zone sensible cooling + heating) / COP / conditioned area [kWh/m²/yr electrical]",
-        f"- **EPref** = SI 5282 Part 1 Annex ג reference values per floor type and unit area (Zone {climate_zone})",
+        "- **EPdes** = Σ(zone sensible cooling + heating) / COP / area [kWh/m²/yr electrical]",
+        (f"- **EPref** = SI 5282 Part 1 Annex ג tabulated values by floor type (Zone {climate_zone})"
+         if tabulated_epref else
+         f"- **EPref** = SI 5282 Part 1 Annex ג reference box simulation — 100 m², 4 orientations, per floor type (Zone {climate_zone})"),
         "- **IP** = (EPref − EPdes) / EPref × 100 %",
-        "- **Floor type:** Ground = lowest floor, Top = highest floor or exposed-roof ratio ≥ 50%, Middle = all others",
-        "- **Building grade** = area-weighted average of unit scores, rounded to nearest integer",
+        "- **Building grade** = area-weighted average of unit scores, rounded to integer",
+        f"- **5-year cost** = EPref × area × 5 yr × {_ELECTRICITY_RATE_NIS} NIS/kWh",
         "",
     ]
 
     md_path = output_dir / "residential_report.md"
     md_path.write_text("\n".join(lines), encoding="utf-8")
 
-    # ── PDF report ────────────────────────────────────────────────────────────
-    pdf_path = output_dir / "residential_report.pdf"
+    # ── PDF report ────────────────────────────────────────────────────────────────
     html_str = _build_html(
         project_name=project_name or "Building Energy Rating",
         today=today,
@@ -828,6 +1134,7 @@ def generate_residential_report(
         ip_pct=ip_pct,
         ep_des=ep_des,
         ep_ref=ep_ref,
+        ep_ref_weighted=ep_ref_weighted,
         cop=cop,
         cond_area=cond_area,
         unit_ratings=unit_ratings,
@@ -841,17 +1148,19 @@ def generate_residential_report(
         win_summary=win_summary,
         total_windows=total_windows,
         total_glass_area=total_glass_area,
+        costs=costs,
     )
     html_path = output_dir / "residential_report.html"
     html_path.write_text(html_str, encoding="utf-8")
 
+    pdf_path = output_dir / "residential_report.pdf"
     pdf_path = _render_pdf(html_str, html_path, pdf_path)
 
-    # ── units.csv ─────────────────────────────────────────────────────────────
+    # ── units.csv ─────────────────────────────────────────────────────────────────
     units_path = output_dir / "units.csv"
     write_units_csv(unit_ratings, units_path)
 
-    # ── windows.csv ───────────────────────────────────────────────────────────
+    # ── windows.csv ───────────────────────────────────────────────────────────────
     windows_path = output_dir / "windows.csv"
     write_windows_csv(window_records, windows_path)
 

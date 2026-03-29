@@ -12,7 +12,7 @@ import click
 from il_energy.config import EnergyPlusConfig, detect_zone_from_epw
 from il_energy.models import SimulationRequest
 from il_energy.postprocessing.metrics import extract_metrics
-from il_energy.postprocessing.zone_aggregator import aggregate_zones_to_flats, override_floor_types_from_surfaces
+from il_energy.postprocessing.zone_aggregator import aggregate_zones_to_flats, assign_orientations_from_windows, override_floor_types_from_surfaces
 from il_energy.rating.calculator import compare_simulations, compute_ip, compute_unit_ratings, grade_from_ip
 from il_energy.reference.box_generator import generate_reference_box_idf
 from il_energy.reference.generator import generate_reference_idf
@@ -379,6 +379,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
     # Apply roof-ratio override BEFORE EPref lookup so penthouse/setback units
     # get the correct "top" EPref rather than the "middle" value.
     override_floor_types_from_surfaces(flats, proposed_metrics.envelope_opaque)
+    # Derive dominant glazing orientation per flat from window azimuths.
+    assign_orientations_from_windows(flats, proposed_metrics.envelope_windows)
 
     # ── 3. EPref — tabulated (Zone B) or reference-box simulation (Zones A/C) ─
     ep_ref_values_path = Path(__file__).parent.parent.parent / "standards" / "si5282" / "ep_ref_values.json"
@@ -532,8 +534,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
 
     # ── 6. Professional report ────────────────────────────────────────────────
     click.echo("\n6. Generating professional report...")
+    project_name = idf_path.stem
     try:
-        project_name = idf_path.stem
         report_paths = generate_residential_report(
             rating_result=result,
             output=proposed_metrics,
@@ -543,8 +545,43 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
         click.echo(f"   ✓ {report_paths['report_md'].name}")
         click.echo(f"   ✓ {report_paths['units_csv'].name}")
         click.echo(f"   ✓ {report_paths['windows_csv'].name}")
+        if "report_pdf" in report_paths:
+            click.echo(f"   ✓ {report_paths['report_pdf'].name}")
     except Exception as e:
         click.echo(f"   Report generation failed: {e}", err=True)
+
+    # ── 7. ReportH — envelope H-indicator compliance ──────────────────────────
+    click.echo("\n7. Generating ReportH (envelope H-value compliance)...")
+    try:
+        from il_energy.envelope.idf_surface_parser import parse_frame_conductances
+        from il_energy.envelope.h_value import compute_h_value_units
+        from il_energy.envelope.report_h import generate_report_h
+
+        frame_conds = parse_frame_conductances(idf_preprocessed)
+        click.echo(f"   Frame conductances parsed: {len(frame_conds)} entries")
+
+        h_units = compute_h_value_units(
+            proposed_metrics, flats, frame_conds, building_type="new"
+        )
+        click.echo(f"   H-value units computed: {len(h_units)}")
+        pass_n = sum(1 for hu in h_units if hu.passes)
+        fail_n = len(h_units) - pass_n
+        click.echo(f"   Pass: {pass_n}  Fail: {fail_n}")
+
+        h_paths = generate_report_h(
+            h_units,
+            output_dir=out_path,
+            project_name=project_name,
+            climate_zone=zone,
+            building_type="new",
+        )
+        click.echo(f"   ✓ {h_paths['h_values_csv'].name}")
+        if "report_h_pdf" in h_paths:
+            click.echo(f"   ✓ {h_paths['report_h_pdf'].name}")
+        else:
+            click.echo(f"   ✓ {h_paths['report_h_html'].name} (HTML only — install WeasyPrint for PDF)")
+    except Exception as e:
+        click.echo(f"   ReportH generation failed: {e}", err=True)
 
 
 if __name__ == "__main__":

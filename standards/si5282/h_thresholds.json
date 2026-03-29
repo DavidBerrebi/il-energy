@@ -1,0 +1,16 @@
+{
+  "_comment": "SI 5282 Part 1 (2024) — H-indicator required values by floor type and building vintage",
+  "_formula": "H = sum(U_i * A_i) / A_floor  [W/m²K]; Pass when H_calc <= H_req",
+  "new": {
+    "ground":              {"h_req": 2.10, "label_he": "קומה צמודת קרקע"},
+    "middle":              {"h_req": 2.10, "label_he": "קומה ביניים"},
+    "top":                 {"h_req": 2.70, "label_he": "קומה עליונה"},
+    "above_unconditioned": {"h_req": 2.70, "label_he": "מעל חלל סגור שאינו מאוקלם"}
+  },
+  "existing": {
+    "ground":              {"h_req": 2.30, "label_he": "קומה צמודת קרקע"},
+    "middle":              {"h_req": 2.30, "label_he": "קומה ביניים"},
+    "top":                 {"h_req": 3.00, "label_he": "קומה עליונה"},
+    "above_unconditioned": {"h_req": 3.00, "label_he": "מעל חלל סגור שאינו מאוקלם"}
+  }
+}

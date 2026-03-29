@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Dict, List, Optional, Tuple
 
-from il_energy.models import EnvelopeSurface, FlatEnergy, ZoneEnergy
+from il_energy.models import EnvelopeSurface, FlatEnergy, WindowSurface, ZoneEnergy
 
 
 def _parse_flat_and_floor(zone_name: str) -> Tuple[Optional[str], Optional[int]]:
@@ -166,3 +166,61 @@ def override_floor_types_from_surfaces(
             continue
         if roof_area / flat.floor_area_m2 >= roof_ratio_threshold:
             flat.floor_type = "top"
+
+
+def _azimuth_to_cardinal(azimuth_deg: float) -> str:
+    """Convert EnergyPlus outward-normal azimuth (0=North, CW) to cardinal letter."""
+    az = azimuth_deg % 360.0
+    if az < 45 or az >= 315:
+        return "N"
+    if az < 135:
+        return "E"
+    if az < 225:
+        return "S"
+    return "W"
+
+
+def assign_orientations_from_windows(
+    flats: List[FlatEnergy],
+    windows: List[WindowSurface],
+) -> None:
+    """Set flat.orientation to the dominant glazing direction (N/E/S/W).
+
+    Uses exterior fenestration glass area by azimuth.  The cardinal direction
+    with the largest total glass area wins.  Flats with no windows keep an
+    empty orientation string.
+
+    Args:
+        flats:   Flat list to update in-place.
+        windows: Exterior window surfaces from the SQL parser (envelope_windows).
+    """
+    # Build zone → flat_id lookup
+    zone_to_flat: Dict[str, str] = {}
+    for flat in flats:
+        for z in flat.zones:
+            zone_to_flat[z.upper()] = flat.flat_id
+
+    flat_by_id: Dict[str, FlatEnergy] = {f.flat_id: f for f in flats}
+
+    # Accumulate glass area by (flat_id, cardinal)
+    area_by_flat_dir: Dict[str, Dict[str, float]] = {}
+    for win in windows:
+        if win.azimuth_deg is None:
+            continue
+        flat_id = zone_to_flat.get(win.zone.upper())
+        if flat_id is None:
+            continue
+        cardinal = _azimuth_to_cardinal(win.azimuth_deg)
+        glass = win.glass_area_m2 or 0.0
+        if flat_id not in area_by_flat_dir:
+            area_by_flat_dir[flat_id] = {}
+        area_by_flat_dir[flat_id][cardinal] = (
+            area_by_flat_dir[flat_id].get(cardinal, 0.0) + glass
+        )
+
+    # Assign dominant orientation
+    for flat_id, dir_areas in area_by_flat_dir.items():
+        flat = flat_by_id.get(flat_id)
+        if flat is None or not dir_areas:
+            continue
+        flat.orientation = max(dir_areas, key=lambda d: dir_areas[d])
