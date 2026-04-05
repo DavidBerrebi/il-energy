@@ -1,20 +1,18 @@
 {
   "_description": "Tabulated EPref values (kWh/m2/yr electrical) for SI 5282 Part 1 (2024 amendment).",
-  "_source": "Calibrated against SI 5282 Part 1 reference building results, Zone B. Zones A and C: not yet calibrated — use reference-box simulation as fallback.",
+  "_source": "Zones A, B, and C: not yet calibrated — use reference-box simulation as fallback.",
   "_notes": [
     "EPref = reference HVAC energy / COP / area, averaged over 4 cardinal orientations.",
     "Small unit threshold: area <= 50 m2 uses higher EPref (more wall area per m2).",
     "Floor type 'top' applies to units with roof exposed to outdoors (may not coincide with highest floor number — setback or penthouse units).",
-    "Middle-floor units above unconditioned space may receive a higher EPref at the engineer's discretion."
+    "Middle-floor units above unconditioned space may receive a higher EPref at the engineer's discretion.",
+    "Zone A = Mediterranean coastal (Tel Aviv, Haifa, Ashkelon) → Standard Part 1 Zone A.",
+    "Zone B = Hot-arid desert (Eilat, Beersheba, Sedom) → Standard Part 1 Zone D.",
+    "Zone C = Highland (Jerusalem, Safed) → Standard Part 1 Zone C."
   ],
   "zones": {
-    "B": {
-      "ground":  { "standard": 28.94 },
-      "middle":  { "standard": 38.04, "small_le50m2": 44.89 },
-      "top":     { "standard": 41.34 },
-      "small_unit_threshold_m2": 50
-    },
     "A": null,
+    "B": null,
     "C": null
   }
 }

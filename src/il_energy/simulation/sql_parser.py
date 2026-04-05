@@ -8,8 +8,10 @@ from pathlib import Path
 from il_energy.exceptions import SQLParseError
 from il_energy.models import (
     BuildingArea,
+    ConstructionAssembly,
     EnergyEndUse,
     EnvelopeSurface,
+    MaterialLayer,
     NormalizedMetrics,
     SimulationMetadata,
     UnmetHours,
@@ -292,6 +294,176 @@ class SQLParser:
             total_unmet_hours=heating + cooling,
         )
 
+    # --- Construction Assemblies (for Report 1045) ---
+
+    def parse_construction_assemblies(self) -> list[ConstructionAssembly]:
+        """Extract construction assemblies with material layers from SQL.
+
+        Queries the Constructions, ConstructionLayers, and Materials tables
+        to build a layer-by-layer breakdown of each exterior/semi-exterior
+        opaque construction used in the building.
+
+        Surface class (Wall/Roof/Floor/Ceiling) and adjacency are derived
+        from the Surfaces table tilt and boundary condition.
+
+        Semi-exterior detection: surfaces with ExtBoundCond > 0 whose
+        boundary partner is in a different zone (typically a CORE zone)
+        are classified as semi-exterior rather than interior.
+        """
+        # ── Collect unique construction + surface info ────────────────────────
+        # ExtBoundCond: 0=Exterior, -1=Ground, >0=surface index of partner
+        try:
+            rows = self._conn.execute("""
+                SELECT
+                    c.ConstructionIndex,
+                    c.Name AS cname,
+                    c.Uvalue,
+                    s.Tilt,
+                    s.ExtBoundCond,
+                    s.ZoneIndex,
+                    s.SurfaceIndex
+                FROM Surfaces s
+                JOIN Constructions c ON s.ConstructionIndex = c.ConstructionIndex
+                WHERE c.TypeIsWindow = 0
+                  AND c.Name NOT LIKE '%!_REV' ESCAPE '!'
+                  AND c.Name NOT IN ('IRTSURFACE', 'LINEARBRIDGINGCONSTRUCTION')
+                  AND s.HeatTransferSurf = 1
+            """).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+        # Build zone index → zone name map for semi-exterior detection
+        zone_names: dict[int, str] = {}
+        try:
+            for zr in self._conn.execute("SELECT ZoneIndex, ZoneName FROM Zones").fetchall():
+                zone_names[zr["ZoneIndex"]] = zr["ZoneName"]
+        except sqlite3.OperationalError:
+            pass
+
+        # Build surface index → zone index map
+        surf_zone: dict[int, int] = {}
+        try:
+            for sr in self._conn.execute("SELECT SurfaceIndex, ZoneIndex FROM Surfaces").fetchall():
+                surf_zone[sr["SurfaceIndex"]] = sr["ZoneIndex"]
+        except sqlite3.OperationalError:
+            pass
+
+        # Known interior-only constructions (both sides conditioned, same type)
+        _SKIP_NAMES = {"_INTPARTITION", "_INTFLOOR_REVERSED"}
+
+        # Determine per-construction: best adjacency classification
+        # Priority: Exterior > Ground > Semi-Exterior; skip pure Interior
+        constr_info: dict[str, dict] = {}  # cname_upper → {ci, tilt, adjacency}
+
+        for row in rows:
+            cname = row["cname"]
+            cname_upper = cname.upper()
+            if cname_upper in _SKIP_NAMES:
+                continue
+
+            ext_bc = int(row["ExtBoundCond"])
+            tilt = float(row["Tilt"])
+
+            if ext_bc == 0:
+                adjacency = "Exterior"
+            elif ext_bc == -1:
+                adjacency = "Exterior"  # ground contact
+            elif ext_bc > 0:
+                # Check if partner surface is in a different zone
+                partner_zone = surf_zone.get(ext_bc)
+                this_zone = int(row["ZoneIndex"])
+                if partner_zone is not None and partner_zone != this_zone:
+                    # Different zone — semi-exterior if one side is CORE
+                    this_name = zone_names.get(this_zone, "")
+                    partner_name = zone_names.get(partner_zone, "")
+                    if "CORE" in partner_name.upper() or "CORE" in this_name.upper():
+                        adjacency = "Semi-Exterior"
+                        # If this surface is in the CORE zone, flip tilt to
+                        # represent the conditioned zone's perspective
+                        if "CORE" in this_name.upper():
+                            tilt = 180.0 - tilt if tilt <= 90 else tilt
+                    else:
+                        # Two conditioned zones — interior partition
+                        continue
+                else:
+                    continue  # same zone or unknown — skip
+            else:
+                continue
+
+            # Keep the most "exterior" classification per construction
+            adj_priority = {"Exterior": 2, "Semi-Exterior": 1}
+            existing = constr_info.get(cname_upper)
+            if existing is None or adj_priority.get(adjacency, 0) > adj_priority.get(existing["adjacency"], 0):
+                constr_info[cname_upper] = {
+                    "cname": cname,
+                    "ci": row["ConstructionIndex"],
+                    "tilt": tilt,
+                    "adjacency": adjacency,
+                }
+
+        assemblies = []
+        for cname_upper, info in constr_info.items():
+            tilt = info["tilt"]
+            adjacency = info["adjacency"]
+
+            # Determine surface class from tilt
+            if 60 <= tilt <= 120:
+                surface_class = "Wall"
+            elif tilt < 60:
+                surface_class = "Roof"
+            else:
+                surface_class = "Floor"
+
+            # For semi-exterior ceilings (tilt < 60, semi-ext), classify as Ceiling
+            if tilt < 60 and adjacency == "Semi-Exterior":
+                surface_class = "Ceiling"
+
+            # Query material layers
+            try:
+                layer_rows = self._conn.execute("""
+                    SELECT cl.LayerIndex, m.Name, m.Thickness, m.Conductivity,
+                           m.Density, m.Resistance
+                    FROM ConstructionLayers cl
+                    JOIN Materials m ON cl.MaterialIndex = m.MaterialIndex
+                    WHERE cl.ConstructionIndex = ?
+                    ORDER BY cl.LayerIndex
+                """, (info["ci"],)).fetchall()
+            except sqlite3.OperationalError:
+                layer_rows = []
+
+            layers: list[MaterialLayer] = []
+            total_density_kg_m2 = 0.0
+            total_resistance = 0.0
+
+            for lr in layer_rows:
+                thickness = float(lr["Thickness"])
+                conductivity = float(lr["Conductivity"])
+                density = float(lr["Density"])
+                resistance = float(lr["Resistance"])
+                density_kg_m2 = thickness * density
+
+                layers.append(MaterialLayer(
+                    name=lr["Name"],
+                    thickness_m=thickness,
+                    conductivity_w_mk=conductivity,
+                    resistance_m2kw=resistance,
+                    density_kg_m3=density,
+                    calculated_density_kg_m2=density_kg_m2,
+                ))
+                total_density_kg_m2 += density_kg_m2
+                total_resistance += resistance
+
+            assemblies.append(ConstructionAssembly(
+                name=info["cname"],
+                surface_class=surface_class,
+                adjacency=adjacency,
+                layers=layers,
+                calculated_density_kg_m2=total_density_kg_m2,
+                calculated_resistance_m2kw=total_resistance,
+            ))
+
+        return assemblies
+
     # --- Zone-Level Energy (from ReportData) ---
 
     def parse_zone_energy(self) -> list[ZoneEnergy]:
@@ -392,6 +564,24 @@ class SQLParser:
             except sqlite3.OperationalError:
                 rdd_rate = []
 
+            # EP 25.2 may not report "Sensible Heating Rate" — fall back to
+            # "Total Heating Rate" for heating if no sensible heating vars found.
+            has_sensible_heating = any(
+                "HEATING" in r["Name"].upper() for r in rdd_rate
+            )
+            if not has_sensible_heating:
+                try:
+                    rdd_total_heat = self._conn.execute(
+                        """SELECT ReportDataDictionaryIndex, KeyValue, Name
+                           FROM ReportDataDictionary
+                           WHERE Name LIKE 'Zone Ideal Loads Supply Air Total Heating Rate'
+                           AND ReportingFrequency = 'Run Period'
+                           AND IsMeter = 0"""
+                    ).fetchall()
+                    rdd_rate = list(rdd_rate) + list(rdd_total_heat)
+                except sqlite3.OperationalError:
+                    pass
+
             for rdd in rdd_rate:
                 key = rdd["KeyValue"].upper()
                 var_name = rdd["Name"].upper()
@@ -410,6 +600,21 @@ class SQLParser:
                     zones[matched].heating_kwh += annual_kwh
                 elif "COOLING" in var_name:
                     zones[matched].cooling_kwh += annual_kwh
+
+        # ── Heating fallback: if all zones report zero heating, redistribute ────
+        # building-total from AnnualBuildingUtilityPerformanceSummary by zone area.
+        # Triggered when Output:Variable for Ideal Loads was absent in the original
+        # IDF (e.g. projects already simulated before idf_parser injection was added).
+        zone_list = list(zones.values())
+        if sum(z.heating_kwh for z in zone_list) == 0.0:
+            try:
+                bldg_heating = self.parse_end_uses().heating_kwh
+                total_area = sum(z.floor_area_m2 for z in zone_list if z.floor_area_m2 > 0)
+                if bldg_heating > 0.0 and total_area > 0:
+                    for z in zone_list:
+                        z.heating_kwh = bldg_heating * (z.floor_area_m2 / total_area)
+            except Exception:
+                pass  # non-critical fallback
 
         # ── Compute totals ───────────────────────────────────────────────────────
         for z in zones.values():

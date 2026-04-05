@@ -14,9 +14,9 @@ IMPORTANT — Reference building methodology note:
   buildings (SI 5282 Part 2) or for a quick first-pass on residential buildings.
 
 Zone naming — this file uses the Amendment naming convention:
-  Zone A = Eilat (extreme hot-arid)   → maps to Standard Part 1 Zone D
-  Zone B = Tel Aviv coastal (hot-humid) → maps to Standard Part 1 Zone A
-  Zone C = Jerusalem (temperate)       → maps to Standard Part 1 Zone C
+  Zone A = Tel Aviv coastal (hot-humid) → maps to Standard Part 1 Zone A
+  Zone B = Eilat (extreme hot-arid)     → maps to Standard Part 1 Zone D
+  Zone C = Jerusalem (temperate)        → maps to Standard Part 1 Zone C
 
 Source: SI 5282 Part 1, Table ג-1, page 43. R-values are material resistance
 [m²K/W] without film. U_with_film = 1 / (r_material + R_FILMS).
@@ -43,25 +43,25 @@ R_FILMS = 0.17
 #   U = 1 / (r_material + R_FILMS)  where R_FILMS = 0.17 m²K/W
 #
 # Zone mapping (this file → SI 5282 Part 1 standard zone):
-#   Our A (Eilat)     → Standard Zone D: r_wall=0.89, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
-#   Our B (Tel Aviv)  → Standard Zone A: r_wall=0.63, r_roof=1.51, r_open_floor=0.67, r_ground=0.68
-#   Our C (Jerusalem) → Standard Zone C: r_wall=0.80, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
+#   Our A (Tel Aviv coastal) → Standard Zone A: r_wall=0.63, r_roof=1.51, r_open_floor=0.67, r_ground=0.68
+#   Our B (Eilat hot-arid)   → Standard Zone D: r_wall=0.89, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
+#   Our C (Jerusalem)        → Standard Zone C: r_wall=0.80, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
 #
 # Note: "top ceiling" (roof) has r=1.51 for ALL zones in the standard —
 # the reference roof is INSULATED (55mm insulation + 140mm concrete slab).
 REFERENCE_U_VALUES: Dict[str, Dict[str, float]] = {
-    # Zone B (Tel Aviv coastal, hot-humid) → Standard Part 1 Zone A
+    # Zone A (Tel Aviv coastal, hot-humid) → Standard Part 1 Zone A
     # r_wall=0.63, r_roof=1.51, r_open_floor=0.67, r_ground=0.68
-    "B": {
+    "A": {
         "extwall":      round(1.0 / (0.63 + R_FILMS), 4),  # 1.2500 W/m²K  (22cm concrete block, no added insulation)
         "extwallmamad": round(1.0 / (0.63 + R_FILMS), 4),  # 1.2500 W/m²K  (same as extwall)
         "flatroof":     round(1.0 / (1.51 + R_FILMS), 4),  # 0.5952 W/m²K  (insulated: 55mm XPS + 140mm slab)
         "groundfloor":  round(1.0 / (0.68 + R_FILMS), 4),  # 1.1765 W/m²K  (20mm insulation + 200mm slab; all zones same)
         "extfloor":     round(1.0 / (0.67 + R_FILMS), 4),  # 1.1905 W/m²K  (floor above open space, Zone A value)
     },
-    # Zone A (Eilat, extreme hot-arid) → Standard Part 1 Zone D
+    # Zone B (Eilat, extreme hot-arid) → Standard Part 1 Zone D
     # r_wall=0.89, r_roof=1.51, r_open_floor=1.04, r_ground=0.68
-    "A": {
+    "B": {
         "extwall":      round(1.0 / (0.89 + R_FILMS), 4),  # 0.9434 W/m²K  (29cm concrete block)
         "extwallmamad": round(1.0 / (0.89 + R_FILMS), 4),  # 0.9434 W/m²K
         "flatroof":     round(1.0 / (1.51 + R_FILMS), 4),  # 0.5952 W/m²K  (same for all zones)

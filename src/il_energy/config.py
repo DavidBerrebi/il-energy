@@ -99,13 +99,16 @@ SIMULATION_TIMEOUT = 3600
 
 # WMO station → SI 5282 zone (our A/B/C naming)
 _WMO_ZONE_MAP = {
-    "401990": "A",  # Eilat-Hozman (hot arid)
-    "401920": "A",  # Sedom / Dead Sea
-    "401880": "A",  # Beersheba (hot semi-arid)
-    "401800": "B",  # Tel Aviv Ben Gurion (coastal)
-    "401762": "B",  # Tel Aviv Sde Dov (coastal)
-    "401550": "B",  # Haifa (coastal)
-    "401710": "B",  # Ashkelon / coastal south
+    # Zone A — Mediterranean coastal
+    "401762": "A",  # Tel Aviv Sde Dov
+    "401800": "A",  # Tel Aviv Ben Gurion
+    "401550": "A",  # Haifa
+    "401710": "A",  # Ashkelon
+    # Zone B — Hot arid desert (Negev / Rift Valley)
+    "401990": "B",  # Eilat-Hozman
+    "401920": "B",  # Sedom / Dead Sea
+    "401880": "B",  # Beersheba
+    # Zone C — Highland
     "401839": "C",  # Jerusalem center
     "401830": "C",  # Jerusalem
     "401410": "C",  # Safed (highland north)
@@ -151,5 +154,5 @@ def detect_zone_from_epw(epw_path: "Path") -> str:
     if elev > 400.0:
         return "C"
     if lat < 30.5:
-        return "A"
-    return "B"
+        return "B"   # hot-arid south (Negev / Rift Valley)
+    return "A"       # coastal / central lowlands default

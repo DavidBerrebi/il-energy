@@ -13,6 +13,15 @@ from il_energy.simulation.idf_v89_converter import convert_v89_idf, convert_v9x_
 _OUTPUT_SQLITE = "\nOutput:SQLite,\n  SimpleAndTabular;\n"
 _OUTPUT_SUMMARY = "\nOutput:Table:SummaryReports,\n  AllSummary;\n"
 _OUTPUT_TABLE_STYLE = "\nOutputControl:Table:Style,\n  Comma;\n"
+# EP variable names for zone-level ideal loads energy (J), written per zone name.
+# Use SENSIBLE variants to exclude latent dehumidification — matches EP 9.x / EVERGREEN.
+# These match Strategy 1 in sql_parser.parse_zone_energy (%Ideal Loads%Energy%).
+_OUTPUT_IDEAL_LOADS_HEAT = (
+    "\nOutput:Variable,*,Zone Ideal Loads Supply Air Sensible Heating Energy,Annual;\n"
+)
+_OUTPUT_IDEAL_LOADS_COOL = (
+    "\nOutput:Variable,*,Zone Ideal Loads Supply Air Sensible Cooling Energy,Annual;\n"
+)
 
 
 def _has_object(content: str, object_type: str) -> bool:
@@ -56,6 +65,11 @@ def ensure_sql_output(idf_path: Path) -> Path:
 
     if not _has_object(content, "OutputControl:Table:Style"):
         injections.append(_OUTPUT_TABLE_STYLE)
+
+    if "Zone Ideal Loads Supply Air Sensible Heating Energy" not in content:
+        injections.append(_OUTPUT_IDEAL_LOADS_HEAT)
+    if "Zone Ideal Loads Supply Air Sensible Cooling Energy" not in content:
+        injections.append(_OUTPUT_IDEAL_LOADS_COOL)
 
     if not injections and not converted:
         return idf_path

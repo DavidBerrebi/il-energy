@@ -299,10 +299,12 @@ def convert_v9x_idf(text: str) -> str:
     """Convert EP 9.x IDF text to EP 25.x compatible format.
 
     EP 9.x IDFs already have WindowShadingControl, RunPeriod Year fields,
-    PolygonClipping ShadowCalculation, etc.  Only three fixes are needed:
+    PolygonClipping ShadowCalculation, etc.  Four fixes are needed:
       1. BuildingSurface:Detailed — insert blank Space Name after Zone Name.
-      2. People — ZoneAveraged → EnclosureAveraged.
-      3. Version — update to 25.2.
+      2. ShadowCalculation — strip trailing EP 9.x fields (SutherlandHodgman,
+         SimpleSkyDiffuseModeling) to clean 4-field EP 25.2 format.
+      3. People — ZoneAveraged → EnclosureAveraged.
+      4. Version — update to 25.2.
     """
     # ── Fix BuildingSurface:Detailed — insert blank Space Name ────────────────
     bsd_block_pat = re.compile(
@@ -319,6 +321,26 @@ def convert_v9x_idf(text: str) -> str:
         )
 
     text = bsd_block_pat.sub(_add_space_name, text)
+
+    # ── Fix ShadowCalculation — strip trailing EP 9.x fields ─────────────────
+    # EP 9.x may include extra fields (SutherlandHodgman, , SimpleSkyDiffuseModeling)
+    # that EP 25.2 does not expect.  Rewrite to clean 4-field format.
+    sc_pat = re.compile(r"(ShadowCalculation\s*,.*?;)", re.DOTALL | re.IGNORECASE)
+
+    def _fix_shadow_calc_v9(m: re.Match) -> str:
+        block = m.group(1)
+        nums = re.findall(r"(?<![.\w])\d+(?![.\w])", block)
+        freq = nums[0] if nums else "20"
+        max_fig = nums[1] if len(nums) > 1 else "15000"
+        return (
+            f"  ShadowCalculation,\n"
+            f"    PolygonClipping,              !- Shading Calculation Method\n"
+            f"    Periodic,                     !- Shading Calculation Update Frequency Method\n"
+            f"    {freq},                       !- Shading Calculation Update Frequency\n"
+            f"    {max_fig};                    !- Maximum Figures in Shadow Overlap Calculations\n"
+        )
+
+    text = sc_pat.sub(_fix_shadow_calc_v9, text)
 
     # ── Fix People — ZoneAveraged → EnclosureAveraged ─────────────────────────
     text = re.sub(r"\bZoneAveraged\b", "EnclosureAveraged", text, flags=re.IGNORECASE)

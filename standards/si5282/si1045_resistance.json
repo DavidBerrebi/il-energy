@@ -1,0 +1,28 @@
+{
+  "_comment": "SI 1045 minimum required thermal resistance [m2-K/W] by surface class, adjacency, and climate zone",
+  "_source": "Israeli Standard SI 1045 — Thermal Insulation of Buildings",
+  "A": {
+    "wall_exterior": 0.6,
+    "wall_semi_exterior": 0.45,
+    "roof_exterior": 1.5,
+    "floor_exterior": 0.6,
+    "floor_semi_exterior": 0.6,
+    "ceiling_semi_exterior": 0.5
+  },
+  "B": {
+    "wall_exterior": 1.1,
+    "wall_semi_exterior": 0.85,
+    "roof_exterior": 2.0,
+    "floor_exterior": 1.0,
+    "floor_semi_exterior": 0.75,
+    "ceiling_semi_exterior": 0.75
+  },
+  "C": {
+    "wall_exterior": 0.8,
+    "wall_semi_exterior": 0.6,
+    "roof_exterior": 1.8,
+    "floor_exterior": 0.8,
+    "floor_semi_exterior": 0.6,
+    "ceiling_semi_exterior": 0.6
+  }
+}

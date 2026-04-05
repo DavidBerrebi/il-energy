@@ -73,6 +73,29 @@ class EnvelopeSurface(BaseModel):
     tilt_deg: Optional[float] = None
 
 
+class MaterialLayer(BaseModel):
+    """Single material layer within a construction assembly."""
+
+    name: str
+    thickness_m: float = 0.0
+    conductivity_w_mk: float = 0.0
+    resistance_m2kw: float = 0.0
+    density_kg_m3: float = 0.0
+    calculated_density_kg_m2: float = 0.0  # thickness * density_kg_m3
+
+
+class ConstructionAssembly(BaseModel):
+    """Construction assembly with material layers for SI 1045 Report."""
+
+    name: str
+    surface_class: str = ""  # Wall / Roof / Floor / Ceiling
+    adjacency: str = ""      # Exterior / Semi-Exterior
+    layers: List[MaterialLayer] = Field(default_factory=list)
+    calculated_density_kg_m2: float = 0.0
+    required_resistance_m2kw: float = 0.0
+    calculated_resistance_m2kw: float = 0.0
+
+
 class WindowSurface(BaseModel):
     """Exterior fenestration surface from the Envelope Summary."""
 

@@ -11,9 +11,9 @@ Per Appendix ג of SI 5282 Part 1 (February 2023):
 - Run 4 times (N/E/S/W orientations), EPref = average HVAC thermal / COP / 100 m²
 
 Zone naming (our project → SI 5282 Part 1 standard):
-  Our A (Eilat)     → Standard Zone D
-  Our B (Tel Aviv)  → Standard Zone A
-  Our C (Jerusalem) → Standard Zone C
+  Our A (Tel Aviv coastal)  → Standard Zone A
+  Our B (Eilat hot-arid)    → Standard Zone D
+  Our C (Jerusalem)         → Standard Zone C
 """
 
 from __future__ import annotations
@@ -27,16 +27,16 @@ from typing import Optional
 # fmt: off
 _R_VALUES = {
     # (our zone) → { element: r_material [m²K/W] }
-    "A": {"extwall": 0.89, "roof": 1.51, "open_floor": 1.04, "sep_floor": 0.79, "ground": 0.68, "inter": 0.17},
-    "B": {"extwall": 0.63, "roof": 1.51, "open_floor": 0.67, "sep_floor": 0.67, "ground": 0.68, "inter": 0.17},
+    "A": {"extwall": 0.63, "roof": 1.51, "open_floor": 0.67, "sep_floor": 0.67, "ground": 0.68, "inter": 0.17},  # coastal (Standard Zone A)
+    "B": {"extwall": 0.89, "roof": 1.51, "open_floor": 1.04, "sep_floor": 0.79, "ground": 0.68, "inter": 0.17},  # hot-arid (Standard Zone D)
     "C": {"extwall": 0.80, "roof": 1.51, "open_floor": 1.04, "sep_floor": 0.79, "ground": 0.68, "inter": 0.17},
 }
 # fmt: on
 
 # Cooling and heating months by zone (1-indexed months)
 _COOLING_MONTHS = {
-    "A": (4, 11),   # Apr–Nov  (Standard Zone D / hot-arid Eilat)
-    "B": (4, 11),   # Apr–Nov  (Standard Zone A / Tel Aviv coastal)
+    "A": (4, 11),   # Apr–Nov  (Standard Zone A / Tel Aviv coastal)
+    "B": (4, 11),   # Apr–Nov  (Standard Zone D / hot-arid Eilat)
     "C": (5, 10),   # May–Oct  (Standard Zone C / Jerusalem temperate)
 }
 _HEATING_MONTHS = {
@@ -109,7 +109,7 @@ def generate_reference_box_idf(
 
     Args:
         output_idf: Destination path for the generated IDF.
-        climate_zone: Our zone label ("A"=Eilat, "B"=Tel Aviv, "C"=Jerusalem).
+        climate_zone: Our zone label ("A"=Tel Aviv coastal, "B"=Eilat hot-arid, "C"=Jerusalem).
         north_axis_deg: Building North Axis in degrees (0=window S, 90=window W,
                         180=window N, 270=window E).
         floor_type: "middle" (adiabatic floor+ceiling), "top" (insulated roof),
