@@ -15,9 +15,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov", "ruff"]
+gui = ["tkinterweb>=4.0", "tkmacosx>=1.0"]
 
 [project.scripts]
 il-energy = "il_energy.cli:main"
+il-energy-gui = "il_energy.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/il_energy"]
