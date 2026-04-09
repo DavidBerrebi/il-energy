@@ -25,10 +25,8 @@ from il_energy.models import FlatEnergy, SimulationOutput
 from il_energy.postprocessing.zone_aggregator import _parse_flat_and_floor
 
 
-_H_THRESHOLDS_PATH = (
-    Path(__file__).parent.parent.parent.parent
-    / "standards" / "si5282" / "h_thresholds.json"
-)
+from il_energy import STANDARDS_DIR
+_H_THRESHOLDS_PATH = STANDARDS_DIR / "h_thresholds.json"
 
 # Fallback frame conductance (W/m²K) — aluminum without thermal break
 _DEFAULT_FRAME_CONDUCTANCE = 5.8

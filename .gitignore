@@ -47,6 +47,9 @@ weather/*.epw
 weather/*.ddy
 weather/*.stat
 
+# Simulation outputs (transient run results)
+output/
+
 # Test outputs
 tests/output/
 

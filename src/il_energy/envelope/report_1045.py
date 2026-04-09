@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from il_energy.models import ConstructionAssembly
 
-_STANDARDS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "standards" / "si5282"
+from il_energy import STANDARDS_DIR as _STANDARDS_DIR
 
 
 # ── Load SI 1045 required resistance values ─────────────────────────────────

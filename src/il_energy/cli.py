@@ -349,7 +349,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
     proposed_dir = out_path / "proposed"
     proposed_req = SimulationRequest(idf_path=preprocessed_idf_path, epw_path=epw_path, output_dir=proposed_dir)
     try:
-        proposed_result = run_simulation(proposed_req, config)
+        proposed_result = run_simulation(proposed_req, config,
+                                         stdout_callback=lambda l: click.echo(f"   EP> {l}", nl=False))
     except Exception as e:
         click.echo(f"Proposed simulation failed: {e}", err=True)
         sys.exit(1)
@@ -384,7 +385,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
     assign_orientations_from_windows(flats, proposed_metrics.envelope_windows)
 
     # ── 3. EPref — tabulated (Zone B) or reference-box simulation (Zones A/C) ─
-    ep_ref_values_path = Path(__file__).parent.parent.parent / "standards" / "si5282" / "ep_ref_values.json"
+    from il_energy import STANDARDS_DIR
+    ep_ref_values_path = STANDARDS_DIR / "ep_ref_values.json"
     with open(ep_ref_values_path, encoding="utf-8") as _f:
         _ep_ref_data = json.load(_f)
     zone_table = (_ep_ref_data.get("zones") or {}).get(zone)
@@ -446,7 +448,8 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
                 req = SimulationRequest(idf_path=ref_idf_path, epw_path=epw_path,
                                         output_dir=ref_out_dir)
                 try:
-                    res = run_simulation(req, config)
+                    res = run_simulation(req, config,
+                                         stdout_callback=lambda l: click.echo(f"   EP> {l}", nl=False))
                 except Exception as e:
                     click.echo(f"   Reference box {ft}/{label} failed: {e}", err=True)
                     sys.exit(1)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from il_energy.exceptions import ILEnergyError
@@ -38,7 +37,8 @@ def grade_from_ip(ip_percent: float) -> Dict[str, object]:
     Returns:
         dict with keys: grade, name_en, name_he, score, ip_range.
     """
-    thresholds_path = Path(__file__).parent.parent.parent.parent / "standards" / "si5282" / "rating_thresholds.json"
+    from il_energy import STANDARDS_DIR
+    thresholds_path = STANDARDS_DIR / "rating_thresholds.json"
 
     if not thresholds_path.is_file():
         raise ILEnergyError(f"Rating thresholds not found: {thresholds_path}")

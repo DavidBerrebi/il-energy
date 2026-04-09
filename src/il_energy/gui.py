@@ -27,12 +27,18 @@ try:
 except ImportError:
     _Button = tk.Button  # fallback on non-macOS
 
-# Optional PDF viewer
+# PDF rendering
 try:
-    from tkinterweb import HtmlFrame  # type: ignore
-    _HAS_TKWEB = True
+    import fitz  # PyMuPDF
+    _HAS_FITZ = True
 except ImportError:
-    _HAS_TKWEB = False
+    _HAS_FITZ = False
+
+try:
+    from PIL import Image, ImageTk  # type: ignore
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
 
 
 # ── Colours / fonts ───────────────────────────────────────────────────────────
@@ -75,6 +81,9 @@ class App(tk.Tk):
         self._pdf_paths: list[Path] = []
         self._viewer_idx: int = 0
         self._running = False
+        self._fitz_doc = None       # currently open fitz PDF document
+        self._pdf_page_idx: int = 0
+        self._tk_image = None       # keep reference to prevent GC
 
         self._build_ui()
 
@@ -165,25 +174,25 @@ class App(tk.Tk):
         list_scroll = tk.Scrollbar(list_outer, orient=VERTICAL)
         list_scroll.pack(side=RIGHT, fill=Y)
 
-        self._pdf_canvas = tk.Canvas(list_outer, bg=_PANEL, highlightthickness=0,
-                                     yscrollcommand=list_scroll.set)
-        self._pdf_canvas.pack(fill=BOTH, expand=True)
-        list_scroll.config(command=self._pdf_canvas.yview)
+        self._list_canvas = tk.Canvas(list_outer, bg=_PANEL, highlightthickness=0,
+                                      yscrollcommand=list_scroll.set)
+        self._list_canvas.pack(fill=BOTH, expand=True)
+        list_scroll.config(command=self._list_canvas.yview)
 
-        self._pdf_list_frame = tk.Frame(self._pdf_canvas, bg=_PANEL)
-        self._pdf_canvas_window = self._pdf_canvas.create_window(
+        self._pdf_list_frame = tk.Frame(self._list_canvas, bg=_PANEL)
+        self._list_canvas_window = self._list_canvas.create_window(
             (0, 0), window=self._pdf_list_frame, anchor="nw"
         )
         self._pdf_list_frame.bind(
             "<Configure>",
-            lambda e: self._pdf_canvas.configure(
-                scrollregion=self._pdf_canvas.bbox("all")
+            lambda e: self._list_canvas.configure(
+                scrollregion=self._list_canvas.bbox("all")
             ),
         )
-        self._pdf_canvas.bind(
+        self._list_canvas.bind(
             "<Configure>",
-            lambda e: self._pdf_canvas.itemconfig(
-                self._pdf_canvas_window, width=e.width
+            lambda e: self._list_canvas.itemconfig(
+                self._list_canvas_window, width=e.width
             ),
         )
 
@@ -191,12 +200,12 @@ class App(tk.Tk):
         viewer_outer = tk.Frame(results_paned, bg=_PANEL)
         results_paned.add(viewer_outer, weight=3)
 
-        # Viewer nav bar
+        # Viewer nav bar — PDF file navigation (prev/next file)
         nav_bar = tk.Frame(viewer_outer, bg=_PANEL)
-        nav_bar.pack(fill=X, pady=(0, 4))
+        nav_bar.pack(fill=X, pady=(0, 2))
 
         self._prev_btn = _Button(
-            nav_bar, text="◀ Prev", font=_FONT, bg=_ACCENT, fg="white",
+            nav_bar, text="◀ Prev PDF", font=_FONT, bg=_ACCENT, fg="white",
             relief="flat", padx=8, cursor="hand2",
             command=self._viewer_prev,
         )
@@ -209,29 +218,59 @@ class App(tk.Tk):
         self._viewer_label.pack(side=LEFT, expand=True)
 
         self._next_btn = _Button(
-            nav_bar, text="Next ▶", font=_FONT, bg=_ACCENT, fg="white",
+            nav_bar, text="Next PDF ▶", font=_FONT, bg=_ACCENT, fg="white",
             relief="flat", padx=8, cursor="hand2",
             command=self._viewer_next,
         )
         self._next_btn.pack(side=RIGHT, padx=(4, 0))
 
-        # Viewer widget
-        self._viewer_container = tk.Frame(viewer_outer, bg=_PANEL)
-        self._viewer_container.pack(fill=BOTH, expand=True)
+        # Page nav bar — page within the current PDF
+        page_bar = tk.Frame(viewer_outer, bg=_PANEL)
+        page_bar.pack(fill=X, pady=(0, 4))
 
-        if _HAS_TKWEB:
-            self._html_frame = HtmlFrame(self._viewer_container, messages_enabled=False)
-            self._html_frame.pack(fill=BOTH, expand=True)
-        else:
-            tk.Label(
-                self._viewer_container,
-                text=(
-                    "Inline PDF viewer not available.\n"
-                    "Install tkinterweb:  pip install tkinterweb\n\n"
-                    "Use the [Open] buttons to view PDFs in your system viewer."
-                ),
-                font=_FONT, fg=_TEXT_DIM, bg=_PANEL, justify="center",
-            ).pack(expand=True)
+        self._page_prev_btn = _Button(
+            page_bar, text="◀ Page", font=_FONT_SMALL, bg=_BTN_SECONDARY, fg="white",
+            relief="flat", padx=6, cursor="hand2",
+            command=self._page_prev,
+        )
+        self._page_prev_btn.pack(side=LEFT, padx=(0, 4))
+
+        self._page_label = tk.Label(
+            page_bar, text="", font=_FONT_SMALL, fg=_TEXT_DIM, bg=_PANEL,
+        )
+        self._page_label.pack(side=LEFT, expand=True)
+
+        self._page_next_btn = _Button(
+            page_bar, text="Page ▶", font=_FONT_SMALL, bg=_BTN_SECONDARY, fg="white",
+            relief="flat", padx=6, cursor="hand2",
+            command=self._page_next,
+        )
+        self._page_next_btn.pack(side=RIGHT, padx=(4, 0))
+
+        # Canvas + scrollbars for PDF page image
+        canvas_frame = tk.Frame(viewer_outer, bg=_PANEL)
+        canvas_frame.pack(fill=BOTH, expand=True)
+
+        v_scroll = tk.Scrollbar(canvas_frame, orient=VERTICAL)
+        v_scroll.pack(side=RIGHT, fill=Y)
+        h_scroll = tk.Scrollbar(canvas_frame, orient=HORIZONTAL)
+        h_scroll.pack(side=BOTTOM, fill=X)
+
+        self._pdf_canvas = tk.Canvas(
+            canvas_frame, bg="#e0e0e0",
+            yscrollcommand=v_scroll.set,
+            xscrollcommand=h_scroll.set,
+            highlightthickness=0,
+        )
+        self._pdf_canvas.pack(fill=BOTH, expand=True)
+        v_scroll.config(command=self._pdf_canvas.yview)
+        h_scroll.config(command=self._pdf_canvas.xview)
+
+        if not _HAS_FITZ:
+            self._pdf_canvas.create_text(
+                200, 100, text="Install PyMuPDF for inline viewing:\npip install pymupdf",
+                fill=_TEXT_DIM, font=_FONT, justify="center",
+            )
 
     def _make_file_row(
         self, parent: tk.Frame, label: str, var: StringVar, row: int, mode: str
@@ -296,29 +335,54 @@ class App(tk.Tk):
         thread.start()
 
     def _run_simulation(self, idf: str, epw: str, out: str) -> None:
-        cmd = [
-            sys.executable, "-m", "il_energy", "run",
-            "--idf", idf,
-            "--epw", epw,
-            "--output-dir", out,
-        ]
-        self._log_append(f"$ {' '.join(cmd)}\n\n")
+        self._log_append(f"compare-residential --idf {idf} --epw {epw} --output-dir {out}\n\n")
+
+        log_lines: list[str] = []
+
+        # Redirect click.echo output to the GUI log
+        import io
+        import click
+
+        log_buf = io.StringIO()
+        original_echo = click.echo
+
+        def _capture_echo(message=None, file=None, nl=True, err=False, **kw):
+            text = str(message) if message is not None else ""
+            if nl:
+                text += "\n"
+            log_buf.write(text)
+            log_lines.append(text)
+            self._log_append(text)
 
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+            click.echo = _capture_echo  # type: ignore[assignment]
+
+            from il_energy.cli import compare_residential
+            compare_residential.callback(
+                idf=idf, epw=epw, output_dir=out,
+                zone=None, simulate_epref=False,
             )
-            for line in proc.stdout:  # type: ignore[union-attr]
-                self._log_append(line)
-            proc.wait()
-            status = "✓ Simulation complete." if proc.returncode == 0 else f"✗ Exit code {proc.returncode}"
-            self._log_append(f"\n{status}\n")
+            log_lines.append("\nSimulation complete.\n")
+            self._log_append("\nSimulation complete.\n")
+        except SystemExit:
+            log_lines.append("\nSimulation finished (with errors — see log).\n")
+            self._log_append("\nSimulation finished (with errors — see log).\n")
         except Exception as exc:
-            self._log_append(f"\nError: {exc}\n")
+            msg = f"\nError: {exc}\n"
+            log_lines.append(msg)
+            self._log_append(msg)
+        finally:
+            click.echo = original_echo  # type: ignore[assignment]
+
+        # Save log to output directory
+        try:
+            out_path = Path(out)
+            out_path.mkdir(parents=True, exist_ok=True)
+            log_path = out_path / "gui_run.log"
+            log_path.write_text("".join(log_lines), encoding="utf-8")
+            self._log_append(f"\nLog saved to: {log_path}\n")
+        except Exception:
+            pass
 
         self.after(0, lambda: self._on_run_complete(out))
 
@@ -350,8 +414,11 @@ class App(tk.Tk):
         self._pdf_paths = []
         self._viewer_idx = 0
         self._viewer_label.configure(text="— no PDF selected —")
-        if _HAS_TKWEB:
-            self._html_frame.load_html("")
+        self._page_label.configure(text="")
+        if self._fitz_doc:
+            self._fitz_doc.close()
+            self._fitz_doc = None
+        self._pdf_canvas.delete("all")
 
     def _populate_pdf_list(self, out_dir: Path) -> None:
         self._clear_pdf_list()
@@ -411,22 +478,54 @@ class App(tk.Tk):
         self._viewer_idx = idx
         pdf = self._pdf_paths[idx]
 
-        label = (
-            f"full/{pdf.name}" if pdf.parent.name == "full" else pdf.name
-        )
+        label = f"full/{pdf.name}" if pdf.parent.name == "full" else pdf.name
         self._viewer_label.configure(
             text=f"{label}  ({idx + 1} / {len(self._pdf_paths)})"
         )
 
-        if _HAS_TKWEB:
-            uri = pdf.as_uri()
-            html = (
-                f"<html><body style='margin:0;padding:0;background:#f0f4ec'>"
-                f"<embed src='{uri}' width='100%' height='100%' "
-                f"type='application/pdf'>"
-                f"</body></html>"
-            )
-            self._html_frame.load_html(html)
+        if not _HAS_FITZ:
+            return
+
+        # Close previous document
+        if self._fitz_doc:
+            self._fitz_doc.close()
+        self._fitz_doc = fitz.open(str(pdf))
+        self._pdf_page_idx = 0
+        self._render_page()
+
+    def _render_page(self) -> None:
+        if not self._fitz_doc:
+            return
+        n_pages = len(self._fitz_doc)
+        page_idx = max(0, min(self._pdf_page_idx, n_pages - 1))
+        self._pdf_page_idx = page_idx
+
+        self._page_label.configure(text=f"Page {page_idx + 1} / {n_pages}")
+
+        page = self._fitz_doc[page_idx]
+        # Render at 1.5x zoom for readability
+        mat = fitz.Matrix(1.5, 1.5)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+
+        # Convert to PIL Image → PhotoImage
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        self._tk_image = ImageTk.PhotoImage(img)
+
+        self._pdf_canvas.delete("all")
+        self._pdf_canvas.create_image(0, 0, anchor="nw", image=self._tk_image)
+        self._pdf_canvas.configure(
+            scrollregion=(0, 0, pix.width, pix.height)
+        )
+        self._pdf_canvas.xview_moveto(0)
+        self._pdf_canvas.yview_moveto(0)
+
+    def _page_prev(self) -> None:
+        self._pdf_page_idx -= 1
+        self._render_page()
+
+    def _page_next(self) -> None:
+        self._pdf_page_idx += 1
+        self._render_page()
 
     def _viewer_prev(self) -> None:
         self._viewer_show(self._viewer_idx - 1)

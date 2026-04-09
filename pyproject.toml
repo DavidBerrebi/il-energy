@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov", "ruff"]
-gui = ["tkinterweb>=4.0", "tkmacosx>=1.0"]
+gui = ["tkinterweb>=4.0", "tkmacosx>=1.0", "pymupdf>=1.20"]
 
 [project.scripts]
 il-energy = "il_energy.cli:main"

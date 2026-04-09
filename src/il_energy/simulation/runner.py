@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Callable, Optional
 
 from il_energy.config import SIMULATION_TIMEOUT, EnergyPlusConfig
 from il_energy.exceptions import SimulationError
@@ -15,6 +16,7 @@ def run_simulation(
     request: SimulationRequest,
     config: EnergyPlusConfig | None = None,
     timeout: int = SIMULATION_TIMEOUT,
+    stdout_callback: Optional[Callable[[str], None]] = None,
 ) -> SimulationResult:
     """Run an EnergyPlus simulation and return the result.
 
@@ -47,19 +49,25 @@ def run_simulation(
         str(prepared_idf),
     ]
 
+    stdout_lines: list[str] = []
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout,
+            cwd=str(Path(config.binary).parent),
         )
-    except subprocess.TimeoutExpired as e:
-        raise SimulationError(
-            f"EnergyPlus timed out after {timeout}s",
-            stderr=str(e),
-        ) from e
+        for line in proc.stdout:  # type: ignore[union-attr]
+            stdout_lines.append(line)
+            if stdout_callback:
+                stdout_callback(line)
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise SimulationError(f"EnergyPlus timed out after {timeout}s")
 
+    stdout_text = "".join(stdout_lines)
     sql_path = output_dir / "eplusout.sql"
 
     result = SimulationResult(
@@ -67,19 +75,17 @@ def run_simulation(
         return_code=proc.returncode,
         output_dir=output_dir,
         sql_path=sql_path if sql_path.is_file() else None,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
+        stdout=stdout_text,
+        stderr="",
     )
 
     if not result.success:
         err_file = output_dir / "eplusout.err"
-        err_content = ""
-        if err_file.is_file():
-            err_content = err_file.read_text(errors="replace")
+        err_content = err_file.read_text(errors="replace") if err_file.is_file() else ""
         raise SimulationError(
             f"EnergyPlus failed (exit code {proc.returncode})",
             return_code=proc.returncode,
-            stderr=err_content or proc.stderr,
+            stderr=err_content or stdout_text,
         )
 
     return result
