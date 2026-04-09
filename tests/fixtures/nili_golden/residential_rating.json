@@ -1,0 +1,579 @@
+{
+  "standard": "SI 5282 Part 1",
+  "climate_zone": "A",
+  "conditioned_area_m2": 2109.42,
+  "ep_des_kwh_m2": 29.70073859688719,
+  "ep_ref_kwh_m2": 39.164383183333335,
+  "ep_ref_by_floor_type": {
+    "ground": 27.43289231666667,
+    "middle": 39.164383183333335,
+    "top": 42.61808965
+  },
+  "ip_percent": 24.163905613285543,
+  "grade": {
+    "grade": "B",
+    "name_en": "Gold",
+    "name_he": "\u05d6\u05d4\u05d1",
+    "score": 3,
+    "ip_range": ">= 20%"
+  },
+  "ref_box_hvac_by_floor_type": {
+    "ground": {
+      "S": 7672.228360000001,
+      "W": 8380.56226,
+      "N": 8127.78428,
+      "E": 8738.89588
+    },
+    "middle": {
+      "S": 11230.56454,
+      "W": 11872.23172,
+      "N": 11511.12032,
+      "E": 12383.343240000002
+    },
+    "top": {
+      "S": 12094.45412,
+      "W": 12944.4548,
+      "N": 12725.010180000001,
+      "E": 13377.788480000001
+    }
+  },
+  "ep_ref_by_flat_id": {
+    "00X1": 27.43289231666667,
+    "00X2": 27.43289231666667,
+    "01X1": 39.164383183333335,
+    "01X2": 46.216854918502456,
+    "01X4": 39.164383183333335,
+    "01X3": 39.164383183333335,
+    "02X1": 39.164383183333335,
+    "02X2": 46.216854918502456,
+    "02X3": 39.164383183333335,
+    "02X4": 39.164383183333335,
+    "03X1": 39.164383183333335,
+    "03X2": 46.216854918502456,
+    "03X3": 39.164383183333335,
+    "03X4": 39.164383183333335,
+    "04X1": 39.164383183333335,
+    "04X2": 46.216854918502456,
+    "04X3": 39.164383183333335,
+    "04X4": 39.164383183333335,
+    "05X1": 39.164383183333335,
+    "05X2": 46.216854918502456,
+    "05X3": 42.61808965,
+    "05X4": 39.164383183333335,
+    "06X1": 42.61808965,
+    "06X2": 42.61808965
+  },
+  "cop": 3.0,
+  "unit_ratings": [
+    {
+      "flat_id": "00X1",
+      "floor_number": 0,
+      "floor_type": "ground",
+      "orientation": "S",
+      "area_m2": 108.7296,
+      "cooling_kwh": 7559.361126507452,
+      "heating_kwh": 4.982945645425133,
+      "hvac_kwh": 7564.344072152878,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 23.190079095765636,
+      "ep_ref_kwh_m2": 27.43289231666667,
+      "ip_percent": 15.466153447929884,
+      "grade": {
+        "grade": "C",
+        "name_en": "Silver",
+        "name_he": "\u05db\u05e1\u05e3",
+        "score": 2,
+        "ip_range": ">= 10%"
+      }
+    },
+    {
+      "flat_id": "00X2",
+      "floor_number": 0,
+      "floor_type": "ground",
+      "orientation": "W",
+      "area_m2": 111.752,
+      "cooling_kwh": 8073.415019027037,
+      "heating_kwh": 33.20047939480525,
+      "hvac_kwh": 8106.615498421842,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 24.18037409747131,
+      "ep_ref_kwh_m2": 27.43289231666667,
+      "ip_percent": 11.856271594152371,
+      "grade": {
+        "grade": "C",
+        "name_en": "Silver",
+        "name_he": "\u05db\u05e1\u05e3",
+        "score": 2,
+        "ip_range": ">= 10%"
+      }
+    },
+    {
+      "flat_id": "01X1",
+      "floor_number": 1,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 111.8723,
+      "cooling_kwh": 9727.31711822026,
+      "heating_kwh": 0.9738333138404919,
+      "hvac_kwh": 9728.290951534102,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 28.986296433624478,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 25.988119618950645,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "01X2",
+      "floor_number": 1,
+      "floor_type": "middle",
+      "orientation": "S",
+      "area_m2": 48.7909,
+      "cooling_kwh": 4271.319379982662,
+      "heating_kwh": 2.2455113824949855,
+      "hvac_kwh": 4273.564891365158,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.196461439634284,
+      "ep_ref_kwh_m2": 46.216854918502456,
+      "ip_percent": 36.82724302396056,
+      "grade": {
+        "grade": "A",
+        "name_en": "Platinum",
+        "name_he": "\u05e4\u05dc\u05d8\u05d9\u05e0\u05d4",
+        "score": 4,
+        "ip_range": ">= 30%"
+      }
+    },
+    {
+      "flat_id": "01X3",
+      "floor_number": 1,
+      "floor_type": "middle",
+      "orientation": "N",
+      "area_m2": 89.74589999999999,
+      "cooling_kwh": 7742.107805312289,
+      "heating_kwh": 34.57782071363738,
+      "hvac_kwh": 7776.6856260259265,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 28.88408876626835,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 26.249090580443085,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "01X4",
+      "floor_number": 1,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 90.484,
+      "cooling_kwh": 7969.451180185697,
+      "heating_kwh": 30.33325047822204,
+      "hvac_kwh": 7999.784430663919,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.470346251506417,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 24.752175685872363,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "02X1",
+      "floor_number": 2,
+      "floor_type": "middle",
+      "orientation": "N",
+      "area_m2": 89.613,
+      "cooling_kwh": 7913.115603868501,
+      "heating_kwh": 13.494313397704767,
+      "hvac_kwh": 7926.609917266206,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.484598281001666,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 24.715785403843576,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "02X2",
+      "floor_number": 2,
+      "floor_type": "middle",
+      "orientation": "S",
+      "area_m2": 48.827799999999996,
+      "cooling_kwh": 4440.022710207005,
+      "heating_kwh": 0.6189590068543632,
+      "hvac_kwh": 4440.641669213859,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.314982238355057,
+      "ep_ref_kwh_m2": 46.216854918502456,
+      "ip_percent": 34.40708526832544,
+      "grade": {
+        "grade": "A",
+        "name_en": "Platinum",
+        "name_he": "\u05e4\u05dc\u05d8\u05d9\u05e0\u05d4",
+        "score": 4,
+        "ip_range": ">= 30%"
+      }
+    },
+    {
+      "flat_id": "02X3",
+      "floor_number": 2,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 106.7596,
+      "cooling_kwh": 9891.338508145516,
+      "heating_kwh": 0.34223959144738303,
+      "hvac_kwh": 9891.680747736964,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.88459413403873,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 21.141119497620803,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "02X4",
+      "floor_number": 2,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 90.94979999999998,
+      "cooling_kwh": 8212.540969230546,
+      "heating_kwh": 11.67923134515165,
+      "hvac_kwh": 8224.220200575697,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.14197649170458,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 23.0372750909768,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "03X1",
+      "floor_number": 3,
+      "floor_type": "middle",
+      "orientation": "N",
+      "area_m2": 89.613,
+      "cooling_kwh": 7794.462660044866,
+      "heating_kwh": 11.991772307481252,
+      "hvac_kwh": 7806.454432352348,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.037656115192917,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 25.856980871461587,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "03X2",
+      "floor_number": 3,
+      "floor_type": "middle",
+      "orientation": "S",
+      "area_m2": 48.827799999999996,
+      "cooling_kwh": 4457.357187039343,
+      "heating_kwh": 0.4542191281168022,
+      "hvac_kwh": 4457.8114061674605,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.432195089460382,
+      "ep_ref_kwh_m2": 46.216854918502456,
+      "ip_percent": 34.153470323491966,
+      "grade": {
+        "grade": "A",
+        "name_en": "Platinum",
+        "name_he": "\u05e4\u05dc\u05d8\u05d9\u05e0\u05d4",
+        "score": 4,
+        "ip_range": ">= 30%"
+      }
+    },
+    {
+      "flat_id": "03X3",
+      "floor_number": 3,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 106.7596,
+      "cooling_kwh": 9969.79578930201,
+      "heating_kwh": 0.28473040406621297,
+      "hvac_kwh": 9970.080519706076,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 31.12938015162438,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 20.51609748095893,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "03X4",
+      "floor_number": 3,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 90.94979999999998,
+      "cooling_kwh": 8243.302929665195,
+      "heating_kwh": 8.824581115369854,
+      "hvac_kwh": 8252.127510780565,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.244257494356106,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 22.776116879515286,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "04X1",
+      "floor_number": 4,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 111.8723,
+      "cooling_kwh": 10354.10686746737,
+      "heating_kwh": 0.7400627092926328,
+      "hvac_kwh": 10354.846930176662,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.85317494493472,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 21.221343381032753,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "04X2",
+      "floor_number": 4,
+      "floor_type": "middle",
+      "orientation": "S",
+      "area_m2": 48.7909,
+      "cooling_kwh": 4462.359790754197,
+      "heating_kwh": 1.051646961135519,
+      "hvac_kwh": 4463.411437715333,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.493469326693656,
+      "ep_ref_kwh_m2": 46.216854918502456,
+      "ip_percent": 34.0208904728264,
+      "grade": {
+        "grade": "A",
+        "name_en": "Platinum",
+        "name_he": "\u05e4\u05dc\u05d8\u05d9\u05e0\u05d4",
+        "score": 4,
+        "ip_range": ">= 30%"
+      }
+    },
+    {
+      "flat_id": "04X3",
+      "floor_number": 4,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 90.484,
+      "cooling_kwh": 8198.12971874682,
+      "heating_kwh": 12.295427703563886,
+      "hvac_kwh": 8210.425146450385,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.246324014744356,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 22.770840349616737,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "04X4",
+      "floor_number": 4,
+      "floor_type": "middle",
+      "orientation": "N",
+      "area_m2": 89.74589999999999,
+      "cooling_kwh": 7821.393235862434,
+      "heating_kwh": 15.288057258901667,
+      "hvac_kwh": 7836.681293121336,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.106924079062246,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 25.680116184112684,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "05X1",
+      "floor_number": 5,
+      "floor_type": "middle",
+      "orientation": "E",
+      "area_m2": 111.8723,
+      "cooling_kwh": 10407.90799815519,
+      "heating_kwh": 4.55550911227993,
+      "hvac_kwh": 10412.46350726747,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 31.024848591556236,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 20.783002131490054,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "05X2",
+      "floor_number": 5,
+      "floor_type": "middle",
+      "orientation": "S",
+      "area_m2": 48.7909,
+      "cooling_kwh": 4498.180566193849,
+      "heating_kwh": 4.451894230515606,
+      "hvac_kwh": 4502.632460424365,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.7614224539437,
+      "ep_ref_kwh_m2": 46.216854918502456,
+      "ip_percent": 33.44111686485904,
+      "grade": {
+        "grade": "A",
+        "name_en": "Platinum",
+        "name_he": "\u05e4\u05dc\u05d8\u05d9\u05e0\u05d4",
+        "score": 4,
+        "ip_range": ">= 30%"
+      }
+    },
+    {
+      "flat_id": "05X3",
+      "floor_number": 5,
+      "floor_type": "top",
+      "orientation": "E",
+      "area_m2": 90.484,
+      "cooling_kwh": 8346.232574743066,
+      "heating_kwh": 37.83191248012324,
+      "hvac_kwh": 8384.06448722319,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 30.885992688295502,
+      "ep_ref_kwh_m2": 42.61808965,
+      "ip_percent": 27.528444043489635,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "05X4",
+      "floor_number": 5,
+      "floor_type": "middle",
+      "orientation": "N",
+      "area_m2": 89.74589999999999,
+      "cooling_kwh": 8005.129998141381,
+      "heating_kwh": 33.414346674440225,
+      "hvac_kwh": 8038.544344815821,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 29.856681827306584,
+      "ep_ref_kwh_m2": 39.164383183333335,
+      "ip_percent": 23.765729470208292,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "06X1",
+      "floor_number": 6,
+      "floor_type": "top",
+      "orientation": "E",
+      "area_m2": 81.38510000000001,
+      "cooling_kwh": 8103.193527801943,
+      "heating_kwh": 16.127774662684175,
+      "hvac_kwh": 8119.321302464627,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 33.25474115231013,
+      "ep_ref_kwh_m2": 42.61808965,
+      "ip_percent": 21.970361821907403,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    },
+    {
+      "flat_id": "06X2",
+      "floor_number": 6,
+      "floor_type": "top",
+      "orientation": "E",
+      "area_m2": 112.578,
+      "cooling_kwh": 11137.329344002716,
+      "heating_kwh": 75.3639055124414,
+      "hvac_kwh": 11212.693249515158,
+      "cop": 3.0,
+      "ep_des_kwh_m2": 33.19977630180899,
+      "ep_ref_kwh_m2": 42.61808965,
+      "ip_percent": 22.099332526489754,
+      "grade": {
+        "grade": "B",
+        "name_en": "Gold",
+        "name_he": "\u05d6\u05d4\u05d1",
+        "score": 3,
+        "ip_range": ">= 20%"
+      }
+    }
+  ],
+  "notes": [
+    "EPdes = (cooling + heating kWh) / COP / conditioned area",
+    "EPref = average of 4 orientations (N/E/S/W) / COP / unit_area \u2014 run per flat area",
+    "Building-level EPref uses middle floor type at representative area",
+    "Reference unit per SI 5282 Part 1 Appendix \u05d2, Table \u05d2-1"
+  ]
+}
