@@ -91,8 +91,10 @@ class EnergyPlusConfig:
         return self._ep_dir / "ExampleFiles"
 
 
+from il_energy.constants import HIGHLAND_ELEVATION_M, HOT_ARID_LATITUDE_DEG, SIMULATION_TIMEOUT_S
+
 # Default timeout for EnergyPlus simulations (seconds)
-SIMULATION_TIMEOUT = 3600
+SIMULATION_TIMEOUT = SIMULATION_TIMEOUT_S
 
 
 # ── SI 5282 climate zone detection from EPW ───────────────────────────────────
@@ -151,8 +153,8 @@ def detect_zone_from_epw(epw_path: "Path") -> str:
     except (ValueError, IndexError):
         return "B"
 
-    if elev > 400.0:
+    if elev > HIGHLAND_ELEVATION_M:
         return "C"
-    if lat < 30.5:
+    if lat < HOT_ARID_LATITUDE_DEG:
         return "B"   # hot-arid south (Negev / Rift Valley)
     return "A"       # coastal / central lowlands default

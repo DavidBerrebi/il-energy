@@ -8,52 +8,16 @@ expert `windows.csv` format.
 from __future__ import annotations
 
 import csv
-import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from il_energy.models import EnvelopeSurface, SimulationOutput, WindowSurface
-from il_energy.postprocessing.zone_aggregator import _parse_flat_and_floor
-
-
-def _zone_to_flat(zone_name: str) -> Optional[str]:
-    """Return flat_id for a zone, or None for corridors/unknowns."""
-    flat_id, _ = _parse_flat_and_floor(zone_name)
-    return flat_id
-
-
-def _orientation_label(azimuth_deg: Optional[float]) -> str:
-    """Convert azimuth (0=N, 90=E, 180=S, 270=W) to compass label."""
-    if azimuth_deg is None:
-        return ""
-    az = azimuth_deg % 360
-    if az < 22.5 or az >= 337.5:
-        return "N"
-    if az < 67.5:
-        return "NE"
-    if az < 112.5:
-        return "E"
-    if az < 157.5:
-        return "SE"
-    if az < 202.5:
-        return "S"
-    if az < 247.5:
-        return "SW"
-    if az < 292.5:
-        return "W"
-    return "NW"
-
-
-def _flat_unit_number(flat_id: str) -> str:
-    """Extract the unit number suffix from a flat_id like '00X1' → '1'."""
-    m = re.search(r"X(\d+)$", flat_id, re.IGNORECASE)
-    return m.group(1) if m else flat_id
-
-
-def _flat_floor(flat_id: str) -> str:
-    """Extract the floor prefix from a flat_id like '00X1' → '00'."""
-    m = re.match(r"^(\d+)", flat_id)
-    return m.group(1) if m else ""
+from il_energy.utils.zone_naming import (
+    flat_floor_label as _flat_floor,
+    flat_unit_number as _flat_unit_number,
+    orientation_label_8dir as _orientation_label,
+    zone_to_flat as _zone_to_flat,
+)
 
 
 def build_window_records(

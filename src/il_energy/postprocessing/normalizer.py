@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+from il_energy.constants import GJ_TO_KWH, J_TO_KWH
 from il_energy.models import EnergyEndUse, NormalizedMetrics
 
 
 def joules_to_kwh(joules: float) -> float:
     """Convert Joules to kWh."""
-    return joules / 3_600_000.0
+    return joules * J_TO_KWH
 
 
 def gj_to_kwh(gj: float) -> float:
     """Convert GJ to kWh."""
-    return gj * 277.778
+    return gj * GJ_TO_KWH
 
 
 def compute_normalized_metrics(

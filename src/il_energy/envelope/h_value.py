@@ -16,20 +16,18 @@ needed is frame conductance, supplied via idf_surface_parser.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from il_energy.constants import DEFAULT_FRAME_CONDUCTANCE_W_M2K, TILT_FLOOR_MIN_DEG, TILT_ROOF_MAX_DEG
 from il_energy.models import FlatEnergy, SimulationOutput
-from il_energy.postprocessing.zone_aggregator import _parse_flat_and_floor
-
+from il_energy.utils.zone_naming import flat_floor_label, flat_unit_number, zone_to_flat
 
 from il_energy import STANDARDS_DIR
 _H_THRESHOLDS_PATH = STANDARDS_DIR / "h_thresholds.json"
 
-# Fallback frame conductance (W/m²K) — aluminum without thermal break
-_DEFAULT_FRAME_CONDUCTANCE = 5.8
+_DEFAULT_FRAME_CONDUCTANCE = DEFAULT_FRAME_CONDUCTANCE_W_M2K
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -67,28 +65,18 @@ class HValueUnit:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _zone_to_flat(zone_name: str) -> Optional[str]:
-    flat_id, _ = _parse_flat_and_floor(zone_name)
-    return flat_id
-
-
-def _flat_unit_number(flat_id: str) -> str:
-    m = re.search(r"X(\d+\w*)$", flat_id, re.IGNORECASE)
-    return m.group(1) if m else flat_id
-
-
-def _flat_floor_label(flat_id: str) -> str:
-    m = re.match(r"^(\d+)", flat_id)
-    return m.group(1) if m else ""
+_zone_to_flat = zone_to_flat
+_flat_unit_number = flat_unit_number
+_flat_floor_label = flat_floor_label
 
 
 def _surface_type_from_tilt(tilt_deg: Optional[float]) -> str:
     """Classify surface by tilt angle (0=horizontal roof, 90=vertical wall, 180=floor)."""
     if tilt_deg is None:
         return "Wall"
-    if tilt_deg < 30:
+    if tilt_deg < TILT_ROOF_MAX_DEG:
         return "Roof"
-    if tilt_deg > 150:
+    if tilt_deg > TILT_FLOOR_MIN_DEG:
         return "Floor"
     return "Wall"
 

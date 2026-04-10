@@ -10,18 +10,19 @@ Produces:
 from __future__ import annotations
 
 import csv
-import re
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from il_energy.analysis.windows import build_window_records, window_summary_by_flat, write_windows_csv
+from il_energy.constants import COST_PROJECTION_YEARS, ELECTRICITY_RATE_NIS_PER_KWH
 from il_energy.models import SimulationOutput
+from il_energy.utils.zone_naming import flat_floor_label, flat_unit_number
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-_ELECTRICITY_RATE_NIS = 0.62   # NIS/kWh — residential tariff approximation
-_COST_YEARS = 5                 # 5-year projection (per Evergreen convention)
+_ELECTRICITY_RATE_NIS = ELECTRICITY_RATE_NIS_PER_KWH
+_COST_YEARS = COST_PROJECTION_YEARS
 
 # Grade ↔ score
 _SCORE_TO_GRADE = {5: "A+", 4: "A", 3: "B", 2: "C", 1: "D", 0: "E", -1: "F"}
@@ -74,14 +75,8 @@ def _five_year_costs(ep_ref_weighted: float, ep_des: float, cond_area: float) ->
     }
 
 
-def _flat_unit_number(flat_id: str) -> str:
-    m = re.search(r"X(\d+\w*)$", flat_id, re.IGNORECASE)
-    return m.group(1) if m else flat_id
-
-
-def _flat_floor(flat_id: str) -> str:
-    m = re.match(r"^(\d+)", flat_id)
-    return m.group(1) if m else ""
+_flat_unit_number = flat_unit_number
+_flat_floor = flat_floor_label
 
 
 def write_units_csv(unit_ratings: List[Dict], output_path: Path) -> None:

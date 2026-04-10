@@ -22,9 +22,18 @@ from il_energy.simulation.runner import run_simulation
 from il_energy.simulation.si5282_preprocessor import apply_si5282_reference_conditions
 
 
+from il_energy.constants import (
+    DEFAULT_COP,
+    REFERENCE_BOX_AREA_M2,
+    REF_WINDOW_SHGC,
+    REF_WINDOW_U_W_M2K,
+    SMALL_UNIT_FACTOR,
+    SMALL_UNIT_THRESHOLD_M2,
+)
+
 # Reference window material values per SI 5282 Part 1, Table ג-1
-_REF_WINDOW_U = {"A": 4.0, "B": 4.0, "C": 4.0}    # W/m²K
-_REF_WINDOW_SHGC = {"A": 0.63, "B": 0.63, "C": 0.63}  # Solar Heat Gain Coefficient
+_REF_WINDOW_U = {"A": REF_WINDOW_U_W_M2K, "B": REF_WINDOW_U_W_M2K, "C": REF_WINDOW_U_W_M2K}
+_REF_WINDOW_SHGC = {"A": REF_WINDOW_SHGC, "B": REF_WINDOW_SHGC, "C": REF_WINDOW_SHGC}
 
 
 def _replace_window_materials(idf_text: str, climate_zone: str) -> str:
@@ -294,6 +303,301 @@ def compare(idf: str, epw: str, output_dir: str, zone: str):
     click.echo(f"\nResults written to: {json_path}")
 
 
+def _preprocess_proposed_idf(idf_path: Path, output_dir: Path) -> tuple:
+    """Apply SI 5282 reference conditions to IDF and write preprocessed copy.
+
+    Returns (preprocessed_idf_text, preprocessed_idf_path).
+    """
+    idf_raw = idf_path.read_text(encoding="latin-1")
+    idf_preprocessed = apply_si5282_reference_conditions(idf_raw)
+    preprocessed_idf_path = output_dir / "proposed_si5282.idf"
+    preprocessed_idf_path.write_text(idf_preprocessed, encoding="latin-1")
+    click.echo(f"   Preprocessed IDF written to: {preprocessed_idf_path}\n")
+    return idf_preprocessed, preprocessed_idf_path
+
+
+def _run_proposed_and_aggregate(preprocessed_idf_path: Path, epw_path: Path,
+                                 output_dir: Path, config, cop: float):
+    """Run proposed simulation, extract metrics, compute EPdes, aggregate flats.
+
+    Returns (proposed_result, proposed_metrics, flats, ep_des_kwh_m2, conditioned_area_m2).
+    """
+    proposed_dir = output_dir / "proposed"
+    proposed_request = SimulationRequest(
+        idf_path=preprocessed_idf_path, epw_path=epw_path, output_dir=proposed_dir,
+    )
+    proposed_result = run_simulation(
+        proposed_request, config,
+        stdout_callback=lambda line: click.echo(f"   EP> {line}", nl=False),
+    )
+    click.echo(f"   done (exit code {proposed_result.return_code})")
+
+    proposed_metrics = extract_metrics(proposed_result.sql_path)
+    conditioned_area_m2 = proposed_metrics.building_area.conditioned_m2
+    if conditioned_area_m2 <= 0:
+        click.echo("Error: proposed building has zero conditioned area.", err=True)
+        sys.exit(1)
+
+    # EPdes uses zone-level sensible HVAC only (excludes EP 25.2 latent loads).
+    hvac_thermal_kwh = sum(
+        zone.cooling_kwh + zone.heating_kwh for zone in proposed_metrics.zones
+    )
+    ep_des_kwh_m2 = hvac_thermal_kwh / cop / conditioned_area_m2
+
+    click.echo(f"   Conditioned area: {conditioned_area_m2:.1f} m²")
+    click.echo(f"   HVAC thermal: {hvac_thermal_kwh / conditioned_area_m2:.2f} kWh/m²/yr")
+    click.echo(f"   EPdes (HVAC/COP/area): {ep_des_kwh_m2:.2f} kWh/m²/yr\n")
+
+    # Aggregate zones → flats; classify floor types before EPref lookup so
+    # penthouse units get the correct "top" EPref rather than "middle".
+    flats = aggregate_zones_to_flats(proposed_metrics.zones)
+    override_floor_types_from_surfaces(flats, proposed_metrics.envelope_opaque)
+    assign_orientations_from_windows(flats, proposed_metrics.envelope_windows)
+
+    return proposed_result, proposed_metrics, flats, ep_des_kwh_m2, conditioned_area_m2
+
+
+def _compute_epref_tabulated(zone_table: dict, flats) -> tuple:
+    """Build EPref lookups from tabulated SI 5282 values.
+
+    Returns (ep_ref_by_floor_type, ep_ref_by_flat_id).
+    """
+    ep_ref_by_floor_type: dict = {}
+    ep_ref_by_flat_id: dict = {}
+    small_unit_threshold = zone_table.get("small_unit_threshold_m2", SMALL_UNIT_THRESHOLD_M2)
+
+    for floor_type in ("ground", "middle", "top"):
+        floor_type_data = zone_table.get(floor_type)
+        if floor_type_data:
+            ep_ref_by_floor_type[floor_type] = floor_type_data.get("standard", 0.0)
+
+    for flat in flats:
+        if flat.floor_area_m2 <= 0:
+            continue
+        floor_type_data = zone_table.get(flat.floor_type) or {}
+        if flat.floor_area_m2 <= small_unit_threshold and "small_le50m2" in floor_type_data:
+            ep_ref_by_flat_id[flat.flat_id] = floor_type_data["small_le50m2"]
+        else:
+            ep_ref_by_flat_id[flat.flat_id] = floor_type_data.get("standard", 0.0)
+
+    for floor_type, ep_ref_value in ep_ref_by_floor_type.items():
+        click.echo(f"   EPref({floor_type}) = {ep_ref_value:.2f} kWh/m²/yr  [tabulated]")
+
+    return ep_ref_by_floor_type, ep_ref_by_flat_id
+
+
+def _compute_epref_by_simulation(flats, zone: str, epw_path: Path,
+                                  output_dir: Path, config, cop: float) -> tuple:
+    """Run 12 reference box simulations (3 floor types × 4 orientations).
+
+    Returns (ep_ref_by_floor_type, ep_ref_by_flat_id, ref_hvac_by_floor_type).
+    """
+    # SI 5282 Appendix ג: fixed 100 m² box, 4 orientations averaged.
+    # Small units (≤50 m²) use a multiplier instead of a smaller box because
+    # the standard fixes occupancy at 4 persons regardless of area.
+    orientations = {"S": 0.0, "W": 90.0, "N": 180.0, "E": 270.0}
+    floor_types = sorted({flat.floor_type for flat in flats if flat.floor_area_m2 > 0})
+
+    click.echo(
+        f"3. Running reference boxes — {len(floor_types)} floor types "
+        f"× 4 orientations = {len(floor_types) * 4} runs "
+        f"(100 m² fixed box per SI 5282 Appendix ג)..."
+    )
+
+    ep_ref_by_floor_type: dict = {}
+    ep_ref_by_flat_id: dict = {}
+    ref_hvac_by_floor_type: dict = {}
+
+    for floor_type in floor_types:
+        hvac_per_orientation = []
+        for orientation_label, north_axis_deg in orientations.items():
+            ref_idf_path = (output_dir / "reference_boxes"
+                            / f"refbox_{floor_type}_{orientation_label}.idf")
+            ref_output_dir = (output_dir / "reference_boxes"
+                              / f"refbox_{floor_type}_{orientation_label}")
+            ref_idf_path.parent.mkdir(parents=True, exist_ok=True)
+
+            generate_reference_box_idf(
+                ref_idf_path, climate_zone=zone,
+                north_axis_deg=north_axis_deg, floor_type=floor_type,
+                floor_area_m2=REFERENCE_BOX_AREA_M2,
+            )
+            ref_request = SimulationRequest(
+                idf_path=ref_idf_path, epw_path=epw_path, output_dir=ref_output_dir,
+            )
+            try:
+                ref_result = run_simulation(
+                    ref_request, config,
+                    stdout_callback=lambda line: click.echo(f"   EP> {line}", nl=False),
+                )
+            except Exception as exc:
+                click.echo(f"   Reference box {floor_type}/{orientation_label} failed: {exc}", err=True)
+                sys.exit(1)
+
+            ref_metrics = extract_metrics(ref_result.sql_path)
+            hvac_thermal_kwh = ref_metrics.end_uses.heating_kwh + ref_metrics.end_uses.cooling_kwh
+            hvac_per_orientation.append(hvac_thermal_kwh)
+            click.echo(
+                f"   [{floor_type}/{orientation_label}] HVAC: {hvac_thermal_kwh:.1f} kWh "
+                f"({hvac_thermal_kwh / REFERENCE_BOX_AREA_M2:.2f} kWh/m²)"
+            )
+
+        avg_hvac_kwh = sum(hvac_per_orientation) / len(hvac_per_orientation)
+        ep_ref_by_floor_type[floor_type] = avg_hvac_kwh / cop / REFERENCE_BOX_AREA_M2
+        ref_hvac_by_floor_type[floor_type] = dict(zip(orientations.keys(), hvac_per_orientation))
+        click.echo(f"   EPref({floor_type}) = {ep_ref_by_floor_type[floor_type]:.2f} kWh/m²/yr")
+
+    for flat in flats:
+        if flat.floor_area_m2 <= 0:
+            continue
+        base_epref = ep_ref_by_floor_type.get(flat.floor_type, 0.0)
+        # Middle-floor small units get the SI 5282 Annex ג small-unit multiplier
+        if flat.floor_type == "middle" and flat.floor_area_m2 <= SMALL_UNIT_THRESHOLD_M2:
+            ep_ref_by_flat_id[flat.flat_id] = base_epref * SMALL_UNIT_FACTOR
+        else:
+            ep_ref_by_flat_id[flat.flat_id] = base_epref
+
+    return ep_ref_by_floor_type, ep_ref_by_flat_id, ref_hvac_by_floor_type
+
+
+def _print_rating_table(unit_ratings: list, ep_des_kwh_m2: float,
+                         ep_ref_kwh_m2: float, ip_percent: float,
+                         grade_info: dict, zone: str, conditioned_area_m2: float) -> None:
+    """Print building-level and per-unit rating summary to console."""
+    click.echo("=" * 80)
+    click.echo("SI 5282 PART 1 RESIDENTIAL ENERGY RATING")
+    click.echo("=" * 80)
+    click.echo(f"\nClimate Zone: {zone}")
+    click.echo(f"Conditioned Area: {conditioned_area_m2:.1f} m²\n")
+    click.echo(f"EPdes (proposed HVAC/COP/area):  {ep_des_kwh_m2:8.2f} kWh/m²/yr")
+    click.echo(f"EPref (reference box avg/COP):   {ep_ref_kwh_m2:8.2f} kWh/m²/yr")
+    click.echo(f"\nIMPROVEMENT PERCENTAGE (IP): {ip_percent:+.1f}%")
+    click.echo(f"GRADE: {grade_info['grade']} ({grade_info['name_en']} / {grade_info['name_he']})")
+
+    if not unit_ratings:
+        return
+
+    click.echo(f"\n{'─'*80}")
+    click.echo(f"PER-UNIT RATINGS ({len(unit_ratings)} units)")
+    click.echo(f"{'─'*80}")
+    click.echo(f"{'Unit':<12} {'Floor':<7} {'Type':<8} {'Area':>6} {'EPdes':>7} {'EPref':>7} {'IP%':>7} {'Grade':<8}")
+    click.echo(f"{'─'*80}")
+    grade_counts: dict = {}
+    for unit_rating in unit_ratings:
+        grade_letter = unit_rating['grade']['grade']
+        grade_counts[grade_letter] = grade_counts.get(grade_letter, 0) + 1
+        click.echo(
+            f"{unit_rating['flat_id']:<12} {str(unit_rating['floor_number']):<7} "
+            f"{unit_rating['floor_type']:<8} {unit_rating['area_m2']:>6.1f} "
+            f"{unit_rating['ep_des_kwh_m2']:>7.2f} {unit_rating['ep_ref_kwh_m2']:>7.2f} "
+            f"{unit_rating['ip_percent']:>+7.1f} {grade_letter:<8}"
+        )
+    click.echo(f"{'─'*80}")
+    click.echo("Grade distribution: " + "  ".join(
+        f"{grade}:{count}" for grade, count in sorted(grade_counts.items())
+    ))
+
+
+def _generate_all_reports(
+    rating_result: dict,
+    proposed_metrics,
+    flats,
+    idf_preprocessed: str,
+    idf_path: Path,
+    output_dir: Path,
+    project_name: str,
+    zone: str,
+    proposed_sql_path: Path,
+) -> None:
+    """Generate PDF report, H-value compliance, SI 1045, and IDF object reports."""
+    # Professional PDF report
+    click.echo("\n6. Generating professional report...")
+    try:
+        report_paths = generate_residential_report(
+            rating_result=rating_result,
+            output=proposed_metrics,
+            output_dir=output_dir,
+            project_name=project_name,
+        )
+        click.echo(f"   ✓ {report_paths['report_md'].name}")
+        click.echo(f"   ✓ {report_paths['units_csv'].name}")
+        click.echo(f"   ✓ {report_paths['windows_csv'].name}")
+        if "report_pdf" in report_paths:
+            click.echo(f"   ✓ {report_paths['report_pdf'].name}")
+    except Exception as exc:
+        click.echo(f"   Report generation failed: {exc}", err=True)
+
+    # Envelope H-indicator compliance
+    click.echo("\n7. Generating ReportH (envelope H-value compliance)...")
+    try:
+        from il_energy.envelope.idf_surface_parser import parse_frame_conductances
+        from il_energy.envelope.h_value import compute_h_value_units
+        from il_energy.envelope.report_h import generate_report_h
+
+        frame_conductances = parse_frame_conductances(idf_preprocessed)
+        click.echo(f"   Frame conductances parsed: {len(frame_conductances)} entries")
+
+        h_units = compute_h_value_units(
+            proposed_metrics, flats, frame_conductances, building_type="new",
+        )
+        pass_count = sum(1 for h_unit in h_units if h_unit.passes)
+        click.echo(f"   H-value units computed: {len(h_units)}  Pass: {pass_count}  Fail: {len(h_units) - pass_count}")
+
+        h_paths = generate_report_h(
+            h_units, output_dir=output_dir, project_name=project_name,
+            climate_zone=zone, building_type="new",
+        )
+        click.echo(f"   ✓ {h_paths['h_values_csv'].name}")
+        if "report_h_pdf" in h_paths:
+            click.echo(f"   ✓ {h_paths['report_h_pdf'].name}")
+        else:
+            click.echo(f"   ✓ {h_paths['report_h_html'].name} (HTML only — install WeasyPrint for PDF)")
+    except Exception as exc:
+        click.echo(f"   ReportH generation failed: {exc}", err=True)
+
+    # SI 1045 thermal insulation report
+    click.echo("\n8. Generating Report 1045 (SI 1045 thermal insulation)...")
+    try:
+        from il_energy.simulation.sql_parser import SQLParser
+        from il_energy.envelope.report_1045 import generate_report_1045
+
+        with SQLParser(proposed_sql_path) as parser:
+            assemblies = parser.parse_construction_assemblies()
+        click.echo(f"   Construction assemblies parsed: {len(assemblies)}")
+
+        r1045_paths = generate_report_1045(
+            assemblies, output_dir=output_dir, project_name=project_name, climate_zone=zone,
+        )
+        key = "pdf" if "pdf" in r1045_paths else "html"
+        suffix = "" if key == "pdf" else " (HTML only)"
+        click.echo(f"   ✓ {r1045_paths[key].name}{suffix}")
+    except Exception as exc:
+        click.echo(f"   Report 1045 generation failed: {exc}", err=True)
+
+    # Full IDF object reports (Evergreen-parity)
+    click.echo("\n9. Generating full IDF object reports...")
+    try:
+        import shutil
+        from il_energy.simulation.idf_object_parser import extract_idf_version, parse_idf_objects
+        from il_energy.report.idf_object_report import generate_all_idf_object_reports
+
+        idf_objects = parse_idf_objects(idf_preprocessed)
+        idf_version = extract_idf_version(idf_preprocessed)
+        full_dir = output_dir / "full"
+        generated = generate_all_idf_object_reports(
+            idf_objects, output_dir=full_dir,
+            idf_filename=idf_path.name, idf_version=idf_version,
+        )
+        click.echo(f"   {len(generated)} IDF object reports written to: {full_dir}")
+
+        results_pdf = output_dir / "residential_report.pdf"
+        if results_pdf.exists():
+            shutil.copy2(results_pdf, full_dir / "_Results.pdf")
+            click.echo("   ✓ _Results.pdf")
+    except Exception as exc:
+        click.echo(f"   Full IDF object reports failed: {exc}", err=True)
+
+
 @main.command("compare-residential")
 @click.option("--idf", required=True, type=click.Path(exists=True), help="Proposed building IDF")
 @click.option("--epw", required=True, type=click.Path(exists=True), help="EPW weather file")
@@ -304,20 +608,14 @@ def compare(idf: str, epw: str, output_dir: str, zone: str):
 def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate_epref: bool):
     """SI 5282 Part 1 residential comparison using the standard reference unit.
 
-    Runs the proposed building simulation and the standardized 100 m² reference
-    box (3 floor types × 4 orientations = 12 runs), computes EPref per floor type
-    and EPdes as HVAC-thermal / COP, then calculates IP and energy grade.
-
-    EPref(ft) = average(HVAC_thermal_N + E + S + W) / 4 / 100 m² / COP(3.0)
-    EPdes = (proposed_cooling + proposed_heating) / COP / conditioned_area
-    IP    = (EPref - EPdes) / EPref * 100 %
+    EPref(ft) = average(HVAC_N + E + S + W) / 4 / 100 m² / COP(3.0)
+    EPdes     = (zone_cooling + zone_heating) / COP / conditioned_area
+    IP        = (EPref - EPdes) / EPref × 100%
     """
-    COP = 3.0
-
     idf_path = Path(idf).resolve()
     epw_path = Path(epw).resolve()
-    out_path = Path(output_dir).resolve()
-    out_path.mkdir(parents=True, exist_ok=True)
+    output_dir_path = Path(output_dir).resolve()
+    output_dir_path.mkdir(parents=True, exist_ok=True)
 
     if zone is None:
         zone = detect_zone_from_epw(epw_path)
@@ -326,223 +624,78 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
     click.echo(f"SI 5282 Part 1 Residential Comparison (Zone {zone})")
     click.echo(f"  Proposed IDF: {idf_path}")
     click.echo(f"  Weather: {epw_path}")
-    click.echo(f"  Output: {out_path}\n")
+    click.echo(f"  Output: {output_dir_path}\n")
 
     try:
         config = EnergyPlusConfig()
-    except Exception as e:
-        click.echo(f"Configuration error: {e}", err=True)
+    except Exception as exc:
+        click.echo(f"Configuration error: {exc}", err=True)
         sys.exit(1)
 
     # ── 1. Apply SI 5282 reference conditions ────────────────────────────────
     click.echo("1. Applying SI 5282 reference operating conditions...")
-    with open(idf_path, encoding="latin-1") as f:
-        idf_raw = f.read()
-    idf_preprocessed = apply_si5282_reference_conditions(idf_raw)
-    preprocessed_idf_path = out_path / "proposed_si5282.idf"
-    with open(preprocessed_idf_path, "w", encoding="latin-1") as f:
-        f.write(idf_preprocessed)
-    click.echo(f"   Preprocessed IDF written to: {preprocessed_idf_path}\n")
+    idf_preprocessed, preprocessed_idf_path = _preprocess_proposed_idf(idf_path, output_dir_path)
 
-    # ── 2. Proposed building simulation ─────────────────────────────────────
+    # ── 2. Run proposed simulation + aggregate zones to flats ────────────────
     click.echo("2. Running proposed building simulation (with SI 5282 conditions)...")
-    proposed_dir = out_path / "proposed"
-    proposed_req = SimulationRequest(idf_path=preprocessed_idf_path, epw_path=epw_path, output_dir=proposed_dir)
-    try:
-        proposed_result = run_simulation(proposed_req, config,
-                                         stdout_callback=lambda l: click.echo(f"   EP> {l}", nl=False))
-    except Exception as e:
-        click.echo(f"Proposed simulation failed: {e}", err=True)
-        sys.exit(1)
-    click.echo(f"   done (exit code {proposed_result.return_code})")
-
-    proposed_metrics = extract_metrics(proposed_result.sql_path)
-    cond_area = proposed_metrics.building_area.conditioned_m2
-    if cond_area <= 0:
-        click.echo("Error: proposed building has zero conditioned area.", err=True)
-        sys.exit(1)
-
-    # Compute EPdes from zone-level sensible HVAC (sensible-only, per SI 5282).
-    # EP 25.2 end_uses totals include latent dehumidification loads that EP 9.x
-    # did not compute; zone sums use sensible rates (see sql_parser Strategy 2).
-    flats_for_ep = proposed_metrics.zones  # ZoneEnergy list (sensible only)
-    hvac_proposed = (
-        sum(z.cooling_kwh for z in flats_for_ep)
-        + sum(z.heating_kwh for z in flats_for_ep)
+    proposed_result, proposed_metrics, flats, ep_des_kwh_m2, conditioned_area_m2 = (
+        _run_proposed_and_aggregate(preprocessed_idf_path, epw_path, output_dir_path, config, DEFAULT_COP)
     )
-    ep_des = hvac_proposed / COP / cond_area  # kWh/m²/yr electrical
 
-    click.echo(f"   Conditioned area: {cond_area:.1f} m²")
-    click.echo(f"   HVAC thermal: {hvac_proposed / cond_area:.2f} kWh/m²/yr")
-    click.echo(f"   EPdes (HVAC/COP/area): {ep_des:.2f} kWh/m²/yr\n")
-
-    # ── 2b. Aggregate zones to flats early — needed for per-unit EPref ───────
-    flats = aggregate_zones_to_flats(proposed_metrics.zones)
-    # Apply roof-ratio override BEFORE EPref lookup so penthouse/setback units
-    # get the correct "top" EPref rather than the "middle" value.
-    override_floor_types_from_surfaces(flats, proposed_metrics.envelope_opaque)
-    # Derive dominant glazing orientation per flat from window azimuths.
-    assign_orientations_from_windows(flats, proposed_metrics.envelope_windows)
-
-    # ── 3. EPref — tabulated (Zone B) or reference-box simulation (Zones A/C) ─
+    # ── 3. Compute EPref (tabulated or reference-box simulation) ─────────────
     from il_energy import STANDARDS_DIR
-    ep_ref_values_path = STANDARDS_DIR / "ep_ref_values.json"
-    with open(ep_ref_values_path, encoding="utf-8") as _f:
-        _ep_ref_data = json.load(_f)
-    zone_table = (_ep_ref_data.get("zones") or {}).get(zone)
+    with open(STANDARDS_DIR / "ep_ref_values.json", encoding="utf-8") as epref_file:
+        ep_ref_data = json.load(epref_file)
+    zone_table = (ep_ref_data.get("zones") or {}).get(zone)
 
-    ep_ref_by_flat_id: dict = {}
-    ep_ref_by_floor_type: dict = {}
-    ref_hvac_by_ft: dict = {}
+    ref_hvac_by_floor_type: dict = {}
 
     if zone_table and not simulate_epref:
-        # ── Tabulated EPref (per SI 5282 Part 1, 2024 amendment) ──
         click.echo(f"3. Using tabulated EPref values for Zone {zone} (SI 5282 Part 1)...")
-        threshold = zone_table.get("small_unit_threshold_m2", 50)
-        for ft in ("ground", "middle", "top"):
-            ft_data = zone_table.get(ft)
-            if not ft_data:
-                continue
-            ep_ref_by_floor_type[ft] = ft_data.get("standard", 0.0)
-        for flat in flats:
-            if flat.floor_area_m2 <= 0:
-                continue
-            ft_data = zone_table.get(flat.floor_type) or {}
-            if flat.floor_area_m2 <= threshold and "small_le50m2" in ft_data:
-                ep_ref_by_flat_id[flat.flat_id] = ft_data["small_le50m2"]
-            else:
-                ep_ref_by_flat_id[flat.flat_id] = ft_data.get("standard", 0.0)
-        for ft, val in ep_ref_by_floor_type.items():
-            click.echo(f"   EPref({ft}) = {val:.2f} kWh/m²/yr  [tabulated]")
+        ep_ref_by_floor_type, ep_ref_by_flat_id = _compute_epref_tabulated(zone_table, flats)
     else:
-        # ── Reference-box simulation: 3 floor types × 4 orientations = 12 runs ─
-        # SI 5282 Appendix ג defines the reference unit as a fixed 100 m² box.
-        # Small units (≤50 m²) are not simulated separately; instead a standard-defined
-        # multiplier is applied to the 100 m² EPref.  Simulating a 50 m² box gives
-        # incorrect results because occupancy is fixed at 4 persons (per Table ג-2),
-        # doubling occupant density and artificially inflating EPref.
-        #
-        # Small-unit multiplier for middle-floor units (≤50 m²):
-        #   1.18 = 44.89 / 38.04  (SI 5282 Part 1, 2024, Annex ג tabulated values)
-        SMALL_THRESHOLD = 50.0
-        SMALL_UNIT_FACTOR = 44.89 / 38.04  # applies to middle-floor only
-        BOX_STANDARD = 100.0
-        orientations = {"S": 0.0, "W": 90.0, "N": 180.0, "E": 270.0}
-        floor_types = sorted({f.floor_type for f in flats if f.floor_area_m2 > 0})
-        n_runs = len(floor_types) * 4
-        click.echo(f"3. Running reference boxes — {len(floor_types)} floor types "
-                   f"× 4 orientations = {n_runs} runs (100 m² fixed box per SI 5282 Appendix ג)...")
+        ep_ref_by_floor_type, ep_ref_by_flat_id, ref_hvac_by_floor_type = (
+            _compute_epref_by_simulation(flats, zone, epw_path, output_dir_path, config, DEFAULT_COP)
+        )
 
-        # ep_ref_cache[floor_type] → EPref kWh/m²/yr  (100 m² box)
-        ep_ref_cache: dict[str, float] = {}
+    ep_ref_kwh_m2 = ep_ref_by_floor_type.get("middle", 0.0)
+    click.echo(f"\n   EPref building-level (middle floor): {ep_ref_kwh_m2:.2f} kWh/m²/yr\n")
 
-        for ft in floor_types:
-            hvac_vals = []
-            for label, north_axis in orientations.items():
-                ref_idf_path = out_path / "reference_boxes" / f"refbox_{ft}_{label}.idf"
-                ref_out_dir  = out_path / "reference_boxes" / f"refbox_{ft}_{label}"
-                ref_idf_path.parent.mkdir(parents=True, exist_ok=True)
-                generate_reference_box_idf(ref_idf_path, climate_zone=zone,
-                                           north_axis_deg=north_axis, floor_type=ft,
-                                           floor_area_m2=BOX_STANDARD)
-                req = SimulationRequest(idf_path=ref_idf_path, epw_path=epw_path,
-                                        output_dir=ref_out_dir)
-                try:
-                    res = run_simulation(req, config,
-                                         stdout_callback=lambda l: click.echo(f"   EP> {l}", nl=False))
-                except Exception as e:
-                    click.echo(f"   Reference box {ft}/{label} failed: {e}", err=True)
-                    sys.exit(1)
-                m = extract_metrics(res.sql_path)
-                hvac_thermal = m.end_uses.heating_kwh + m.end_uses.cooling_kwh
-                hvac_vals.append(hvac_thermal)
-                click.echo(f"   [{ft}/{label}] HVAC: {hvac_thermal:.1f} kWh "
-                           f"({hvac_thermal / BOX_STANDARD:.2f} kWh/m²)")
-            avg_hvac = sum(hvac_vals) / len(hvac_vals)
-            ep_ref_cache[ft] = avg_hvac / COP / BOX_STANDARD
-            ref_hvac_by_ft[ft] = dict(zip(orientations.keys(), hvac_vals))
-            click.echo(f"   EPref({ft}) = {ep_ref_cache[ft]:.2f} kWh/m²/yr")
-
-        # Build per-flat EPref; middle-floor small units (≤50 m²) get a multiplier
-        for flat in flats:
-            if flat.floor_area_m2 <= 0:
-                continue
-            base_epref = ep_ref_cache.get(flat.floor_type, 0.0)
-            if flat.floor_type == "middle" and flat.floor_area_m2 <= SMALL_THRESHOLD:
-                ep_ref_by_flat_id[flat.flat_id] = base_epref * SMALL_UNIT_FACTOR
-            else:
-                ep_ref_by_flat_id[flat.flat_id] = base_epref
-
-        # Floor-type EPref for building-level display (100 m² box, no small-unit adjustment)
-        for ft in floor_types:
-            ep_ref_by_floor_type[ft] = ep_ref_cache[ft]
-
-    ep_ref = ep_ref_by_floor_type.get("middle", 0.0)
-    click.echo(f"\n   EPref building-level (middle floor): {ep_ref:.2f} kWh/m²/yr\n")
-
-    # ── 4. Building-level rating ──────────────────────────────────────────────
-    ip_percent = compute_ip(ep_des, ep_ref)
+    # ── 4 & 5. Building-level + per-unit ratings ──────────────────────────────
+    ip_percent = compute_ip(ep_des_kwh_m2, ep_ref_kwh_m2)
     grade_info = grade_from_ip(ip_percent)
-
-    click.echo("=" * 80)
-    click.echo("SI 5282 PART 1 RESIDENTIAL ENERGY RATING")
-    click.echo("=" * 80)
-    click.echo(f"\nClimate Zone: {zone}")
-    click.echo(f"Conditioned Area: {cond_area:.1f} m²\n")
-    click.echo(f"EPdes (proposed HVAC/COP/area):  {ep_des:8.2f} kWh/m²/yr")
-    click.echo(f"EPref (reference box avg/COP):   {ep_ref:8.2f} kWh/m²/yr")
-    click.echo(f"\nIMPROVEMENT PERCENTAGE (IP): {ip_percent:+.1f}%")
-    click.echo(f"GRADE: {grade_info['grade']} ({grade_info['name_en']} / {grade_info['name_he']})")
-
-    # ── 5. Per-unit rating ────────────────────────────────────────────────────
     unit_ratings = compute_unit_ratings(
-        flats, ep_ref_by_floor_type, cop=COP, ep_ref_by_flat_id=ep_ref_by_flat_id
+        flats, ep_ref_by_floor_type, cop=DEFAULT_COP, ep_ref_by_flat_id=ep_ref_by_flat_id,
     )
+    _print_rating_table(unit_ratings, ep_des_kwh_m2, ep_ref_kwh_m2, ip_percent,
+                        grade_info, zone, conditioned_area_m2)
 
-    if unit_ratings:
-        click.echo(f"\n{'─'*80}")
-        click.echo(f"PER-UNIT RATINGS ({len(unit_ratings)} units)")
-        click.echo(f"{'─'*80}")
-        click.echo(f"{'Unit':<12} {'Floor':<7} {'Type':<8} {'Area':>6} {'EPdes':>7} {'EPref':>7} {'IP%':>7} {'Grade':<8}")
-        click.echo(f"{'─'*80}")
-        grade_counts: dict = {}
-        for u in unit_ratings:
-            g = u['grade']['grade']
-            grade_counts[g] = grade_counts.get(g, 0) + 1
-            click.echo(
-                f"{u['flat_id']:<12} {str(u['floor_number']):<7} {u['floor_type']:<8} "
-                f"{u['area_m2']:>6.1f} {u['ep_des_kwh_m2']:>7.2f} {u['ep_ref_kwh_m2']:>7.2f} "
-                f"{u['ip_percent']:>+7.1f} {g:<8}"
-            )
-        click.echo(f"{'─'*80}")
-        click.echo("Grade distribution: " + "  ".join(f"{g}:{n}" for g, n in sorted(grade_counts.items())))
-
-    result = {
+    # ── Write JSON results ────────────────────────────────────────────────────
+    rating_result = {
         "standard": "SI 5282 Part 1",
         "climate_zone": zone,
-        "conditioned_area_m2": cond_area,
-        "ep_des_kwh_m2": ep_des,
-        "ep_ref_kwh_m2": ep_ref,
+        "conditioned_area_m2": conditioned_area_m2,
+        "ep_des_kwh_m2": ep_des_kwh_m2,
+        "ep_ref_kwh_m2": ep_ref_kwh_m2,
         "ep_ref_by_floor_type": ep_ref_by_floor_type,
         "ip_percent": ip_percent,
         "grade": grade_info,
-        "ref_box_hvac_by_floor_type": ref_hvac_by_ft,
+        "ref_box_hvac_by_floor_type": ref_hvac_by_floor_type,
         "ep_ref_by_flat_id": ep_ref_by_flat_id,
-        "cop": COP,
+        "cop": DEFAULT_COP,
         "unit_ratings": unit_ratings,
         "notes": [
             "EPdes = (cooling + heating kWh) / COP / conditioned area",
-            "EPref = average of 4 orientations (N/E/S/W) / COP / unit_area — run per flat area",
+            "EPref = average of 4 orientations (N/E/S/W) / COP / unit_area",
             "Building-level EPref uses middle floor type at representative area",
             "Reference unit per SI 5282 Part 1 Appendix ג, Table ג-1",
         ],
     }
-    json_path = out_path / "residential_rating.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, default=str)
+    json_path = output_dir_path / "residential_rating.json"
+    with open(json_path, "w", encoding="utf-8") as json_file:
+        json.dump(rating_result, json_file, indent=2, default=str)
     click.echo(f"\nResults written to: {json_path}")
 
-    # Write run metadata for traceability
     run_info = {
         "run_timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "standard": "SI 5282 Part 1 (2024)",
@@ -551,114 +704,19 @@ def compare_residential(idf: str, epw: str, output_dir: str, zone: str, simulate
         "epw": str(epw_path),
         "energyplus_version": "25.2",
         "grade": grade_info["grade"],
-        "ep_des_kwh_m2": round(ep_des, 2),
-        "ep_ref_kwh_m2": round(ep_ref, 2),
+        "ep_des_kwh_m2": round(ep_des_kwh_m2, 2),
+        "ep_ref_kwh_m2": round(ep_ref_kwh_m2, 2),
         "ip_percent": round(ip_percent, 1),
     }
-    with open(out_path / "run_info.json", "w", encoding="utf-8") as f:
-        json.dump(run_info, f, indent=2)
+    with open(output_dir_path / "run_info.json", "w", encoding="utf-8") as json_file:
+        json.dump(run_info, json_file, indent=2)
 
-    # ── 6. Professional report ────────────────────────────────────────────────
-    click.echo("\n6. Generating professional report...")
+    # ── 6–9. Generate all reports ─────────────────────────────────────────────
     project_name = idf_path.stem
-    try:
-        report_paths = generate_residential_report(
-            rating_result=result,
-            output=proposed_metrics,
-            output_dir=out_path,
-            project_name=project_name,
-        )
-        click.echo(f"   ✓ {report_paths['report_md'].name}")
-        click.echo(f"   ✓ {report_paths['units_csv'].name}")
-        click.echo(f"   ✓ {report_paths['windows_csv'].name}")
-        if "report_pdf" in report_paths:
-            click.echo(f"   ✓ {report_paths['report_pdf'].name}")
-    except Exception as e:
-        click.echo(f"   Report generation failed: {e}", err=True)
-
-    # ── 7. ReportH — envelope H-indicator compliance ──────────────────────────
-    click.echo("\n7. Generating ReportH (envelope H-value compliance)...")
-    try:
-        from il_energy.envelope.idf_surface_parser import parse_frame_conductances
-        from il_energy.envelope.h_value import compute_h_value_units
-        from il_energy.envelope.report_h import generate_report_h
-
-        frame_conds = parse_frame_conductances(idf_preprocessed)
-        click.echo(f"   Frame conductances parsed: {len(frame_conds)} entries")
-
-        h_units = compute_h_value_units(
-            proposed_metrics, flats, frame_conds, building_type="new"
-        )
-        click.echo(f"   H-value units computed: {len(h_units)}")
-        pass_n = sum(1 for hu in h_units if hu.passes)
-        fail_n = len(h_units) - pass_n
-        click.echo(f"   Pass: {pass_n}  Fail: {fail_n}")
-
-        h_paths = generate_report_h(
-            h_units,
-            output_dir=out_path,
-            project_name=project_name,
-            climate_zone=zone,
-            building_type="new",
-        )
-        click.echo(f"   ✓ {h_paths['h_values_csv'].name}")
-        if "report_h_pdf" in h_paths:
-            click.echo(f"   ✓ {h_paths['report_h_pdf'].name}")
-        else:
-            click.echo(f"   ✓ {h_paths['report_h_html'].name} (HTML only — install WeasyPrint for PDF)")
-    except Exception as e:
-        click.echo(f"   ReportH generation failed: {e}", err=True)
-
-    # ── 8. Report 1045 — SI 1045 construction thermal insulation ─────────────
-    click.echo("\n8. Generating Report 1045 (SI 1045 thermal insulation)...")
-    try:
-        from il_energy.simulation.sql_parser import SQLParser
-        from il_energy.envelope.report_1045 import generate_report_1045
-
-        with SQLParser(proposed_result.sql_path) as parser:
-            assemblies = parser.parse_construction_assemblies()
-        click.echo(f"   Construction assemblies parsed: {len(assemblies)}")
-
-        r1045_paths = generate_report_1045(
-            assemblies,
-            output_dir=out_path,
-            project_name=project_name,
-            climate_zone=zone,
-        )
-        if "pdf" in r1045_paths:
-            click.echo(f"   \u2713 {r1045_paths['pdf'].name}")
-        else:
-            click.echo(f"   \u2713 {r1045_paths['html'].name} (HTML only)")
-    except Exception as e:
-        click.echo(f"   Report 1045 generation failed: {e}", err=True)
-
-    # ── 9. Full IDF object reports (Evergreen-parity) ─────────────────────────
-    click.echo("\n9. Generating full IDF object reports...")
-    try:
-        from il_energy.simulation.idf_object_parser import parse_idf_objects, extract_idf_version
-        from il_energy.report.idf_object_report import generate_all_idf_object_reports
-        import shutil
-
-        idf_objects = parse_idf_objects(idf_preprocessed)
-        idf_version = extract_idf_version(idf_preprocessed)
-        idf_filename = idf_path.name
-
-        full_dir = out_path / "full"
-        generated = generate_all_idf_object_reports(
-            idf_objects,
-            output_dir=full_dir,
-            idf_filename=idf_filename,
-            idf_version=idf_version,
-        )
-        click.echo(f"   {len(generated)} IDF object reports written to: {full_dir}")
-
-        # Copy residential_report.pdf as _Results.pdf into full/
-        results_src = out_path / "residential_report.pdf"
-        if results_src.exists():
-            shutil.copy2(results_src, full_dir / "_Results.pdf")
-            click.echo(f"   ✓ _Results.pdf")
-    except Exception as e:
-        click.echo(f"   Full IDF object reports failed: {e}", err=True)
+    _generate_all_reports(
+        rating_result, proposed_metrics, flats, idf_preprocessed,
+        idf_path, output_dir_path, project_name, zone, proposed_result.sql_path,
+    )
 
 
 if __name__ == "__main__":

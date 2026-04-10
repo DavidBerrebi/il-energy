@@ -124,7 +124,7 @@ class TestOverrideFloorTypesFromSurfaces:
                 tilt_deg=0.0, gross_area_m2=60.0,
             ),
         ]
-        override_floor_types_from_surfaces([flat], surfaces, roof_ratio_threshold=0.50)
+        override_floor_types_from_surfaces([flat], surfaces)
         assert flat.floor_type == "top"
 
     def test_no_promotion_below_threshold(self):

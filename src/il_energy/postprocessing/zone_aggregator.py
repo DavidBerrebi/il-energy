@@ -3,51 +3,20 @@
 
 from __future__ import annotations
 
-import re
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
+from il_energy.constants import ROOF_RATIO_THRESHOLD, ROOF_TILT_THRESHOLD_DEG
 from il_energy.models import EnvelopeSurface, FlatEnergy, WindowSurface, ZoneEnergy
+from il_energy.utils.zone_naming import azimuth_to_cardinal as _azimuth_to_cardinal
+from il_energy.utils.zone_naming import parse_flat_and_floor, zone_to_flat
 
-
-def _parse_flat_and_floor(zone_name: str) -> Tuple[Optional[str], Optional[int]]:
-    """Parse flat ID and floor number from zone name.
-
-    Returns (flat_id, floor_number) or (None, None) if not a flat zone.
-
-    Supports:
-    - Nili-style digit-first:  "00X1:LIVING" → ("00X1", 0)
-    - Letter-first:            "FF01:LIVING"  → ("FF01", None)
-    - FLAT/APT prefix:         "FLAT_3_BEDROOM" → ("FLAT_3", None)
-    - Core/corridor exclusion: "COREX00:..." → (None, None)
-    """
-    # Nili-style: "{floor_2dig}X{unit}:{room}" e.g. "00X1:LIVING", "06X2:SERVICE"
-    match = re.match(r"^(\d{2}X\d+):", zone_name)
-    if match:
-        flat_id = match.group(1)
-        floor_num = int(flat_id[:2])
-        return flat_id, floor_num
-
-    # Explicit corridor/core exclusion
-    if re.match(r"^CORE", zone_name, re.IGNORECASE):
-        return None, None
-
-    # Generic letter-first prefix: "FF01:LIVING" → "FF01"
-    match = re.match(r"^([A-Za-z]+\d+[A-Za-z]*)[:_]", zone_name)
-    if match:
-        return match.group(1), None
-
-    # FLAT/APT/UNIT prefix
-    match = re.match(r"^((?:FLAT|APT|UNIT|FF)\S*?)[:_\s]", zone_name, re.IGNORECASE)
-    if match:
-        return match.group(1), None
-
-    return None, None
+# Re-export for backward compatibility with existing tests and imports
+_parse_flat_and_floor = parse_flat_and_floor
 
 
 def _default_flat_extractor(zone_name: str) -> Optional[str]:
     """Extract flat ID from zone name (legacy interface)."""
-    flat_id, _ = _parse_flat_and_floor(zone_name)
-    return flat_id
+    return zone_to_flat(zone_name)
 
 
 def aggregate_zones_to_flats(
@@ -119,7 +88,6 @@ def aggregate_zones_to_flats(
 def override_floor_types_from_surfaces(
     flats: List[FlatEnergy],
     surfaces: List[EnvelopeSurface],
-    roof_ratio_threshold: float = 0.50,
 ) -> None:
     """Override flat floor_type based on actual roof/floor surfaces.
 
@@ -127,16 +95,14 @@ def override_floor_types_from_surfaces(
     horizontal roof (penthouse / setback units) — even when their floor number
     is not the building maximum.
 
-    A flat is promoted to "top" only when the total area of exterior horizontal
-    surfaces (tilt < 10°) belonging to its zones exceeds ``roof_ratio_threshold``
-    of the flat's floor area.  This avoids false-positives from small balcony
+    A flat is promoted to "top" when the total area of exterior horizontal
+    surfaces (tilt < ROOF_TILT_THRESHOLD_DEG) exceeds ROOF_RATIO_THRESHOLD
+    of the flat's floor area. This avoids false-positives from small balcony
     ceiling slabs or tiny roof offsets.
 
     Args:
         flats: Flat list to update in-place.
         surfaces: Opaque exterior surfaces from the SQL parser.
-        roof_ratio_threshold: Minimum (exposed_roof_area / flat_floor_area) to
-            trigger a "top" promotion.  Default 0.50 (50 %).
     """
     # Build zone→flat_id lookup
     zone_to_flat: Dict[str, str] = {}
@@ -154,7 +120,7 @@ def override_floor_types_from_surfaces(
         flat_id = zone_to_flat.get(surf.zone.upper())
         if flat_id is None:
             continue
-        if surf.tilt_deg < 10.0:
+        if surf.tilt_deg < ROOF_TILT_THRESHOLD_DEG:
             roof_area_by_flat[flat_id] = (
                 roof_area_by_flat.get(flat_id, 0.0) + (surf.gross_area_m2 or 0.0)
             )
@@ -164,20 +130,8 @@ def override_floor_types_from_surfaces(
         flat = flat_by_id.get(flat_id)
         if flat is None or flat.floor_area_m2 <= 0:
             continue
-        if roof_area / flat.floor_area_m2 >= roof_ratio_threshold:
+        if roof_area / flat.floor_area_m2 >= ROOF_RATIO_THRESHOLD:
             flat.floor_type = "top"
-
-
-def _azimuth_to_cardinal(azimuth_deg: float) -> str:
-    """Convert EnergyPlus outward-normal azimuth (0=North, CW) to cardinal letter."""
-    az = azimuth_deg % 360.0
-    if az < 45 or az >= 315:
-        return "N"
-    if az < 135:
-        return "E"
-    if az < 225:
-        return "S"
-    return "W"
 
 
 def assign_orientations_from_windows(
