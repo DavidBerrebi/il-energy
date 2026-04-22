@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVERGREEN Energy Simulator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="header">
+    <div class="header-content">
+        <h1>EVERGREEN</h1>
+        <span class="header-subtitle">Energy Simulator &middot; SI 5282</span>
+    </div>
+</header>
+
+<main class="container">
+    <!-- Input Form -->
+    <section class="card" id="input-section">
+        <h2>New Simulation</h2>
+        <form id="upload-form">
+            <div class="form-group">
+                <label for="idf-file">IDF File</label>
+                <div class="file-upload" id="drop-zone">
+                    <input type="file" id="idf-file" accept=".idf" required>
+                    <p class="file-upload-text">
+                        <span class="file-upload-icon">&#128196;</span>
+                        <span id="file-label">Drop IDF file here or tap to browse</span>
+                    </p>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group flex-2">
+                    <label for="epw-select">Weather File (EPW)</label>
+                    <select id="epw-select" required>
+                        <option value="">Loading weather files...</option>
+                    </select>
+                </div>
+                <div class="form-group flex-1">
+                    <label for="zone-select">Climate Zone</label>
+                    <select id="zone-select">
+                        <option value="auto">Auto-detect</option>
+                        <option value="A">A (Coastal)</option>
+                        <option value="B">B (Desert)</option>
+                        <option value="C">C (Highland)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg" id="run-btn">
+                Run Simulation
+            </button>
+        </form>
+    </section>
+
+    <!-- Progress Section (hidden initially) -->
+    <section class="card hidden" id="progress-section">
+        <div class="progress-header">
+            <h2>Simulation Progress</h2>
+            <span class="badge" id="status-badge">Running</span>
+        </div>
+        <div class="log-viewer" id="log-viewer">
+            <pre id="log-output"></pre>
+        </div>
+    </section>
+
+    <!-- Results Section (hidden initially) -->
+    <section class="card hidden" id="results-section">
+        <h2>Results</h2>
+
+        <!-- Grade Card -->
+        <div class="grade-card" id="grade-card">
+            <div class="grade-badge" id="grade-badge">-</div>
+            <div class="grade-details">
+                <div class="grade-name" id="grade-name"></div>
+                <div class="grade-stats">
+                    <div class="stat">
+                        <span class="stat-label">EPdes</span>
+                        <span class="stat-value" id="stat-epdes">-</span>
+                        <span class="stat-unit">kWh/m&sup2;/yr</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">EPref</span>
+                        <span class="stat-value" id="stat-epref">-</span>
+                        <span class="stat-unit">kWh/m&sup2;/yr</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">IP</span>
+                        <span class="stat-value" id="stat-ip">-</span>
+                        <span class="stat-unit">%</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Area</span>
+                        <span class="stat-value" id="stat-area">-</span>
+                        <span class="stat-unit">m&sup2;</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Per-Unit Ratings Table -->
+        <div class="table-wrapper" id="units-table-wrapper">
+            <h3>Per-Unit Ratings</h3>
+            <table class="data-table" id="units-table">
+                <thead>
+                    <tr>
+                        <th>Unit</th>
+                        <th>Floor</th>
+                        <th>Type</th>
+                        <th>Area</th>
+                        <th>EPdes</th>
+                        <th>EPref</th>
+                        <th>IP%</th>
+                        <th>Grade</th>
+                    </tr>
+                </thead>
+                <tbody id="units-tbody"></tbody>
+            </table>
+        </div>
+
+        <!-- Output Files -->
+        <div id="files-section">
+            <h3>Output Files</h3>
+            <div class="file-list" id="file-list"></div>
+        </div>
+    </section>
+
+    <!-- Job History -->
+    <section class="card" id="history-section">
+        <h2>Recent Jobs</h2>
+        <div id="job-list" class="job-list">
+            <p class="text-dim">No jobs yet.</p>
+        </div>
+    </section>
+</main>
+
+<footer class="footer">
+    <p>EVERGREEN Energy Simulator &middot; SI 5282 Israeli Building Standard</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

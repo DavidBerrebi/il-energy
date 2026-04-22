@@ -16,10 +16,17 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov", "ruff"]
 gui = ["tkinterweb>=4.0", "tkmacosx>=1.0", "pymupdf>=1.20"]
+web = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "python-multipart>=0.0.5",
+    "jinja2>=3.1",
+]
 
 [project.scripts]
 il-energy = "il_energy.cli:main"
 il-energy-gui = "il_energy.gui:main"
+il-energy-web = "il_energy.web.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/il_energy"]
