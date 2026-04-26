@@ -22,7 +22,35 @@ pip install -e ".[web]"
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.9+ and EnergyPlus 25.2.0 at `/Applications/EnergyPlus-25-2-0/`.
+Requires Python 3.9+ and EnergyPlus 25.2.0.
+
+## Dependencies
+
+### EnergyPlus 25.2.0 (required)
+
+The engine shells out to the EnergyPlus binary. It is **not** a Python package — install it separately.
+
+| Platform | Default install path |
+|----------|----------------------|
+| macOS    | `/Applications/EnergyPlus-25-2-0/` |
+| Linux    | `/usr/local/EnergyPlus-25-2-0/` |
+| Windows  | `C:\EnergyPlusV25-2-0\` |
+
+Download: <https://github.com/NREL/EnergyPlus/releases/tag/v25.2.0>
+
+After installing, the engine auto-detects the path. If it isn't found (e.g. custom location), set the environment variable:
+
+```bash
+export ENERGYPLUS_DIR=/path/to/EnergyPlus-25-2-0   # preferred
+# or
+export ENERGYPLUS_PATH=/path/to/EnergyPlus-25-2-0  # alias — either name works
+```
+
+Copy `.env.example` to `.env` and fill in your path. `.env` is gitignored.
+
+### IDF source version vs runtime version
+
+Input IDF files are typically exported from DesignBuilder in **EnergyPlus 8.9 format**. The engine auto-converts them to EP 25.2 format before running. The conversion is handled by [src/il_energy/simulation/idf_v89_converter.py](src/il_energy/simulation/idf_v89_converter.py). You do **not** need EnergyPlus 8.9 installed.
 
 ## Commands
 

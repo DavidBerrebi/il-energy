@@ -58,3 +58,19 @@ tests/output/
 .DS_Store
 Thumbs.db
 .claude/
+
+# Environment variables (local only — see .env.example)
+.env
+.env.local
+
+# EnergyPlus installation directories (never commit binaries)
+/Applications/EnergyPlus-*/
+EnergyPlus-*/
+EnergyPlusV*/
+C:/EnergyPlusV*/
+/usr/local/EnergyPlus-*/
+/opt/EnergyPlus*/
+
+# EnergyPlus run-time files that land in the project root
+Energy+.ini
+audit.out

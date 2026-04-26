@@ -4,15 +4,58 @@ An automated engine that wraps EnergyPlus as a black-box simulation tool, extrac
 
 ---
 
-## Requirements
+## Prerequisites & Setup
 
-- Python 3.9+
-- EnergyPlus 25.2.0 installed at `/Applications/EnergyPlus-25-2-0/`
-- Israeli EPW weather files
+### 1. Install EnergyPlus 25.2.0
+
+EnergyPlus is the simulation engine that powers this tool. It is a standalone binary, not a Python package.
+
+**Download:** <https://github.com/NREL/EnergyPlus/releases/tag/v25.2.0>
+
+| Platform | Installer | Default path after install |
+|----------|-----------|---------------------------|
+| macOS    | `.dmg`    | `/Applications/EnergyPlus-25-2-0/` |
+| Linux    | `.sh`     | `/usr/local/EnergyPlus-25-2-0/` |
+| Windows  | `.exe`    | `C:\EnergyPlusV25-2-0\` |
+
+If you install to a custom location, set the `ENERGYPLUS_DIR` environment variable (see step 3).
+
+> **Note on IDF versions:** Input models are typically exported from DesignBuilder in EnergyPlus 8.9 format. The engine auto-converts them to EP 25.2 before running — you do **not** need EnergyPlus 8.9 installed.
+
+### 2. Install Python dependencies
 
 ```bash
+# Python 3.9+ required
 pip install -e .
+
+# Optional extras
+pip install -e ".[gui]"   # desktop GUI (Tkinter + PDF viewer)
+pip install -e ".[web]"   # web interface (FastAPI)
+pip install -e ".[dev]"   # dev tools (pytest, ruff)
 ```
+
+### 3. Configure EnergyPlus path (if needed)
+
+If EnergyPlus is installed at the default path for your platform, nothing extra is needed — the engine finds it automatically.
+
+For a custom install location, copy the example env file and set your path:
+
+```bash
+cp .env.example .env
+# Then edit .env and set:
+# ENERGYPLUS_DIR=/your/custom/path/to/EnergyPlus-25-2-0
+```
+
+Or export directly in your shell:
+
+```bash
+export ENERGYPLUS_DIR=/path/to/EnergyPlus-25-2-0
+# ENERGYPLUS_PATH is also accepted as an alias
+```
+
+### 4. Obtain EPW weather files
+
+Israeli EPW files are not included in the repository. Obtain them separately and note their paths — you will pass them to the CLI with `--epw`.
 
 ---
 

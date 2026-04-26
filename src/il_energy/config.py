@@ -8,20 +8,48 @@ from pathlib import Path
 
 
 def _find_energyplus() -> Path | None:
-    """Auto-detect EnergyPlus installation path."""
-    # Check environment variable first
-    env_path = os.environ.get("ENERGYPLUS_DIR")
-    if env_path:
-        p = Path(env_path)
-        if p.is_dir():
-            return p
+    """Auto-detect EnergyPlus installation path.
 
-    # macOS default locations
-    for candidate in Path("/Applications").glob("EnergyPlus-*"):
-        if candidate.is_dir():
-            return candidate
+    Resolution order:
+    1. ENERGYPLUS_DIR env var (preferred)
+    2. ENERGYPLUS_PATH env var (alias)
+    3. Platform default install locations (macOS → Linux → Windows)
+    4. 'energyplus' on PATH
+    """
+    # 1 & 2 — environment variables
+    for env_var in ("ENERGYPLUS_DIR", "ENERGYPLUS_PATH"):
+        env_path = os.environ.get(env_var)
+        if env_path:
+            p = Path(env_path)
+            if p.is_dir():
+                return p
 
-    # Check if energyplus is on PATH
+    import platform
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS: /Applications/EnergyPlus-25-2-0/
+        for candidate in sorted(Path("/Applications").glob("EnergyPlus-*"), reverse=True):
+            if candidate.is_dir():
+                return candidate
+
+    elif system == "Linux":
+        # Linux: /usr/local/EnergyPlus-25-2-0/ or /opt/EnergyPlus-25-2-0/
+        for base in (Path("/usr/local"), Path("/opt")):
+            for candidate in sorted(base.glob("EnergyPlus-*"), reverse=True):
+                if candidate.is_dir():
+                    return candidate
+
+    elif system == "Windows":
+        # Windows: C:\EnergyPlusV25-2-0\
+        for drive in ("C:", "D:"):
+            drive_path = Path(drive + "\\")
+            if drive_path.is_dir():
+                for candidate in sorted(drive_path.glob("EnergyPlusV*"), reverse=True):
+                    if candidate.is_dir():
+                        return candidate
+
+    # 4 — fall back to PATH
     ep = shutil.which("energyplus")
     if ep:
         return Path(ep).parent
@@ -56,7 +84,9 @@ class EnergyPlusConfig:
             if detected is None:
                 raise FileNotFoundError(
                     "EnergyPlus installation not found. "
-                    "Set ENERGYPLUS_DIR environment variable or pass ep_dir."
+                    "Set ENERGYPLUS_DIR (or ENERGYPLUS_PATH) environment variable, "
+                    "or install EnergyPlus 25.2.0 from "
+                    "https://github.com/NREL/EnergyPlus/releases"
                 )
             self._ep_dir = detected
 
