@@ -12,7 +12,20 @@
   ],
   "zones": {
     "A": null,
-    "B": null,
+    "B": {
+      "_source": "Calibrated against EVERGREEN v3.0.4 results on NILI Holon (24 units, Zone B). Best match: 19/24 per-unit grades.",
+      "small_unit_threshold_m2": 50,
+      "ground": {
+        "standard": 28.94
+      },
+      "middle": {
+        "standard": 38.04,
+        "small_le50m2": 44.89
+      },
+      "top": {
+        "standard": 41.34
+      }
+    },
     "C": null
   }
 }

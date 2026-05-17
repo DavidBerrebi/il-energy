@@ -500,23 +500,35 @@ def _render_pdf(html_str: str, html_path: "Path", pdf_path: "Path") -> "Optional
     except Exception:
         pass
 
-    # Try Google Chrome headless (macOS or Linux)
+    # Try Google Chrome / Edge headless (Windows, macOS, Linux)
     import subprocess
     import shutil
+    import os as _os
     chrome_candidates = [
+        # Windows — Chrome
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        _os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        # Windows — Edge
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        # macOS
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        # Linux
         "google-chrome",
         "chromium",
         "chromium-browser",
     ]
     chrome_bin = None
     for c in chrome_candidates:
-        if shutil.which(c) or (c.startswith("/") and Path(c).exists()):
+        if shutil.which(c) or Path(c).exists():
             chrome_bin = c
             break
 
     if chrome_bin:
         try:
+            import time as _time
             subprocess.run(
                 [
                     chrome_bin,
@@ -530,6 +542,7 @@ def _render_pdf(html_str: str, html_path: "Path", pdf_path: "Path") -> "Optional
                 check=True,
                 capture_output=True,
             )
+            _time.sleep(0.5)  # Chrome flushes PDF after process exit on Windows
             if pdf_path.exists() and pdf_path.stat().st_size > 0:
                 return pdf_path
         except Exception as e:

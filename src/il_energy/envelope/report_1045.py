@@ -278,17 +278,30 @@ def _html_to_pdf(html_path: Path, pdf_path: Path) -> bool:
         pass
 
     import subprocess
+    import os as _os
+    from pathlib import Path as _Path
     for chrome in (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        _os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "google-chrome", "chromium-browser",
     ):
+        if not (_Path(chrome).exists() if chrome.startswith(("C:\\", "/")) else __import__("shutil").which(chrome)):
+            continue
         try:
+            import time as _time
             subprocess.run(
-                [chrome, "--headless", "--disable-gpu", "--no-sandbox",
-                 f"--print-to-pdf={pdf_path}", str(html_path)],
+                [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 f"--print-to-pdf={pdf_path}", "--print-to-pdf-no-header", str(html_path)],
                 check=True, capture_output=True, timeout=30,
             )
-            return True
+            _time.sleep(0.5)
+            if _Path(pdf_path).exists() and _Path(pdf_path).stat().st_size > 0:
+                return True
         except Exception:
             continue
     return False

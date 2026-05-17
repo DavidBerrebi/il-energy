@@ -177,18 +177,27 @@ def _render_pdf(html_str: str, html_path: Path, pdf_path: Path) -> Optional[Path
 
     import subprocess
     import shutil
+    import os as _os
     for c in [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        _os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "google-chrome", "chromium", "chromium-browser",
     ]:
-        if shutil.which(c) or (c.startswith("/") and Path(c).exists()):
+        if shutil.which(c) or Path(c).exists():
             try:
+                import time as _time
                 subprocess.run(
                     [c, "--headless=new", "--disable-gpu", "--no-sandbox",
                      f"--print-to-pdf={pdf_path}", "--print-to-pdf-no-header",
                      str(html_path)],
                     check=True, capture_output=True,
                 )
+                _time.sleep(0.5)
                 if pdf_path.exists() and pdf_path.stat().st_size > 0:
                     return pdf_path
             except Exception as e:

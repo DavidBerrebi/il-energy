@@ -10,6 +10,12 @@ from pathlib import Path
 
 import click
 
+# Ensure Hebrew and other non-ASCII characters print safely on Windows consoles.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from il_energy.config import EnergyPlusConfig, detect_zone_from_epw
 from il_energy.models import SimulationRequest
 from il_energy.postprocessing.metrics import extract_metrics

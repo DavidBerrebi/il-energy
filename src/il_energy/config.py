@@ -42,11 +42,22 @@ def _find_energyplus() -> Path | None:
 
     elif system == "Windows":
         # Windows: C:\EnergyPlusV25-2-0\
+        # Sort numerically by major version to avoid "V8" beating "V25" lexicographically.
+        def _ep_version_key(p: Path) -> int:
+            import re as _re
+            m = _re.search(r"V(\d+)", p.name)
+            return int(m.group(1)) if m else 0
+
         for drive in ("C:", "D:"):
             drive_path = Path(drive + "\\")
             if drive_path.is_dir():
-                for candidate in sorted(drive_path.glob("EnergyPlusV*"), reverse=True):
-                    if candidate.is_dir():
+                candidates = sorted(
+                    drive_path.glob("EnergyPlusV*"),
+                    key=_ep_version_key,
+                    reverse=True,
+                )
+                for candidate in candidates:
+                    if candidate.is_dir() and _find_binary(candidate) is not None:
                         return candidate
 
     # 4 — fall back to PATH
@@ -62,10 +73,11 @@ def _find_binary(ep_dir: Path) -> Path | None:
     for candidate in sorted(ep_dir.glob("energyplus-*"), reverse=True):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
-    # Try plain 'energyplus'
-    plain = ep_dir / "energyplus"
-    if plain.is_file() and os.access(plain, os.X_OK):
-        return plain
+    # Try plain 'energyplus' and Windows 'energyplus.exe'
+    for name in ("energyplus.exe", "energyplus"):
+        plain = ep_dir / name
+        if plain.is_file():
+            return plain
     return None
 
 
