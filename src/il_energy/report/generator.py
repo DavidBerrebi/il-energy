@@ -238,8 +238,17 @@ body {
     color: white;
     position: relative;
     z-index: 5;
-    transform: scaleY(1.18);
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.8));
+    transform: scale(1.32);
+    filter:
+        drop-shadow(0 3px 0 #22cc44)
+        drop-shadow(3px 0 0 #22cc44)
+        drop-shadow(0 -3px 0 #22cc44)
+        drop-shadow(-3px 0 0 #22cc44)
+        drop-shadow(2px 2px 0 #22cc44)
+        drop-shadow(-2px 2px 0 #22cc44)
+        drop-shadow(2px -2px 0 #22cc44)
+        drop-shadow(-2px -2px 0 #22cc44)
+        drop-shadow(0 0 6px rgba(0,0,0,0.7));
 }
 .grade-box-active-wrap.pos-first {
     clip-path: polygon(0% 0%, calc(100% - 13px) 0%, 100% 50%, calc(100% - 13px) 100%, 0% 100%);
@@ -254,12 +263,12 @@ body {
     margin-left: -7px;
 }
 .active-letter {
-    font-size: 17pt;
+    font-size: 24pt;
     font-weight: 700;
     line-height: 1;
 }
 .active-name {
-    font-size: 7pt;
+    font-size: 8pt;
     font-weight: 600;
     margin-top: 2pt;
 }
@@ -821,8 +830,6 @@ def _build_html(
   {grade_scale}
 
   {project_info}
-
-  {cost_bars}
 
   <div class="footer">
     <span>il-energy — SI 5282 Compliance Engine</span>
