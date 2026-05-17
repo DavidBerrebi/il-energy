@@ -60,6 +60,9 @@ ROOF_RATIO_THRESHOLD = 0.50
 ROOF_TILT_THRESHOLD_DEG = 10.0
 """Surfaces with tilt < this value are classified as horizontal roof."""
 
+FLOOR_TILT_THRESHOLD_DEG = 170.0
+"""Surfaces with tilt > this value are classified as horizontal floor (ground contact or exposed soffit)."""
+
 # ── Surface classification by tilt angle ─────────────────────────────────────
 
 TILT_ROOF_MAX_DEG = 30.0

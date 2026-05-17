@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from il_energy.constants import ROOF_RATIO_THRESHOLD, ROOF_TILT_THRESHOLD_DEG
+from il_energy.constants import FLOOR_TILT_THRESHOLD_DEG, ROOF_RATIO_THRESHOLD, ROOF_TILT_THRESHOLD_DEG
 from il_energy.models import EnvelopeSurface, FlatEnergy, WindowSurface, ZoneEnergy
 from il_energy.utils.zone_naming import azimuth_to_cardinal as _azimuth_to_cardinal
 from il_energy.utils.zone_naming import parse_flat_and_floor, zone_to_flat
@@ -132,6 +132,24 @@ def override_floor_types_from_surfaces(
             continue
         if roof_area / flat.floor_area_m2 >= ROOF_RATIO_THRESHOLD:
             flat.floor_type = "top"
+
+    # Collect flats that have at least one exterior floor surface (ground contact)
+    flats_with_ground_floor: set = set()
+    for surf in surfaces:
+        if surf.tilt_deg is None or surf.adjacency != "Exterior":
+            continue
+        if surf.tilt_deg <= FLOOR_TILT_THRESHOLD_DEG:
+            continue
+        flat_id = zone_to_flat.get(surf.zone.upper())
+        if flat_id is not None:
+            flats_with_ground_floor.add(flat_id)
+
+    # Demote "ground" flats that have no exterior floor surface to "middle".
+    # This handles buildings where the lowest residential floor sits above a
+    # non-residential storey (lobby, parking) — its floor is interior, not on-grade.
+    for flat in flats:
+        if flat.floor_type == "ground" and flat.flat_id not in flats_with_ground_floor:
+            flat.floor_type = "middle"
 
 
 def assign_orientations_from_windows(

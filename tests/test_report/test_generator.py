@@ -37,14 +37,15 @@ class TestBuildingGrade:
         assert result["grade"] == "B"
         assert result["weighted_score"] == pytest.approx(3.0)
 
-    def test_any_f_unit_makes_building_f(self):
+    def test_f_unit_included_in_area_weighted_score(self):
+        # A (score=4, 100m²) + F (score=-1, 50m²) → weighted = (400-50)/150 = 2.33 → C
         units = [
             self._unit(100.0, 4, "A"),
             self._unit(50.0, -1, "F"),
         ]
         result = _building_grade(units, "A")
-        assert result["grade"] == "F"
-        assert result["score"] == -1
+        assert result["grade"] == "C"
+        assert result["score"] == 2
 
     def test_rounding_up(self):
         units = [

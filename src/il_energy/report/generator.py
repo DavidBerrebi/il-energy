@@ -44,10 +44,6 @@ _GRADE_COLOR = {
 
 def _building_grade(unit_ratings: List[Dict], climate_zone: str) -> Dict:
     """Area-weighted building grade from per-unit scores."""
-    if any(u["grade"]["score"] <= -1 for u in unit_ratings):
-        g = "F"
-        return {"grade": g, "name_en": _GRADE_EN[g], "name_he": _GRADE_HE[g],
-                "score": -1, "weighted_score": -1.0}
     total_area = sum(u["area_m2"] for u in unit_ratings)
     if total_area <= 0:
         return {"grade": "?", "name_en": "", "name_he": "", "score": 0, "weighted_score": 0.0}
