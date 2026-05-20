@@ -979,10 +979,18 @@ def generate_residential_report(
     ep_ref_by_floor_type = rating_result.get("ep_ref_by_floor_type", {})
     tabulated_epref = not bool(ref_hvac_by_ft)
 
+    # Building grade comes from the building-level IP (rating_result["grade"]),
+    # not from area-weighted unit scores. The two can differ when some units
+    # are just below a threshold — the standard uses the building IP method.
+    _rg = rating_result.get("grade", {})
+    grade_letter = _rg.get("grade", "?")
+    grade_en = _GRADE_EN.get(grade_letter, _rg.get("name_en", ""))
+    grade_he = _GRADE_HE.get(grade_letter, _rg.get("name_he", ""))
+    # Keep weighted-score for display purposes (informational only)
     building_grade_info = _building_grade(unit_ratings, climate_zone)
-    grade_letter = building_grade_info["grade"]
-    grade_en = building_grade_info["name_en"]
-    grade_he = building_grade_info["name_he"]
+    building_grade_info["grade"] = grade_letter
+    building_grade_info["name_en"] = grade_en
+    building_grade_info["name_he"] = grade_he
 
     today = date.today().strftime("%d %B %Y")
 
