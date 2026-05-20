@@ -30,8 +30,16 @@ def parse_flat_and_floor(zone_name: str) -> Tuple[Optional[str], Optional[int]]:
         floor_num = int(flat_id[:2])
         return flat_id, floor_num
 
-    # Explicit corridor/core exclusion
-    if re.match(r"^CORE", zone_name, re.IGNORECASE):
+    # Lod-style: "{floor_2dig}:{unitCode}{room}"  e.g. "01:2XLiving", "00:1XService"
+    # Exclude corridor zones like "00:Lobby"
+    match = re.match(r"^(\d{2}):(\d+X)", zone_name, re.IGNORECASE)
+    if match:
+        floor_num = int(match.group(1))
+        flat_id = f"{match.group(1)}:{match.group(2).upper()}"
+        return flat_id, floor_num
+
+    # Explicit corridor/core exclusion (CORE..., Lobby, Stairwell, Corridor)
+    if re.match(r"^(CORE|LOBBY|STAIR|CORRIDOR)", zone_name, re.IGNORECASE):
         return None, None
 
     # Generic letter-first prefix: "FF01:LIVING" → "FF01"
